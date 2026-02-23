@@ -28,7 +28,7 @@ const SAMPLES = {
 // ── PDF（印刷方式・日本語完全対応） ──────────────────────────────────────
 function todayStr() { const d=new Date(); return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`; }
 
-function downloadPDF(results) {
+async function downloadPDF(results) {
   const NAVY="#1a3a5c", BLUE="#2563b8", GREEN="#059669";
   const SC = { S:GREEN, O:BLUE, A:"#b45309", P:"#7c3aed" };
 
@@ -101,10 +101,10 @@ function downloadPDF(results) {
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap">
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap');
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Noto Sans JP',sans-serif;font-size:10pt;color:#1e2a3a;background:#fff;padding:0}
+  body{font-family:'Noto Sans JP','Hiragino Kaku Gothic ProN','Hiragino Sans','Meiryo','Yu Gothic',sans-serif;font-size:10pt;color:#1e2a3a;background:#fff;padding:0}
   .cover{background:${NAVY};color:#fff;padding:28px 24px 22px;margin-bottom:0}
   .cover-title{font-size:9pt;opacity:.8;margin-bottom:4px}
   .cover-main{font-size:22pt;font-weight:700;margin-bottom:10px}
@@ -168,26 +168,43 @@ ${patientsHTML}
     document.head.appendChild(s);
   });
 
-  loadHtml2Pdf().then(() => {
-    const container = document.createElement("div");
-    container.innerHTML = html;
-    container.style.cssText = "position:fixed;left:-9999px;top:0;width:794px";
-    document.body.appendChild(container);
+  // フォントをプリロードして描画準備を待つ
+  const waitForFonts = () => {
+    if (document.fonts && document.fonts.ready) {
+      return document.fonts.ready;
+    }
+    return new Promise(r => setTimeout(r, 500));
+  };
 
-    const filename = `VetSOAP_${todayStr().replace(/年|月/g,"-").replace("日","")}_${results.length}頭.pdf`;
-    html2pdf()
+  await loadHtml2Pdf();
+
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  // opacity:0 + 画面内に配置（html2canvasはvisible領域のほうが安定）
+  container.style.cssText = "position:absolute;left:0;top:0;width:794px;z-index:-9999;opacity:0;pointer-events:none";
+  document.body.appendChild(container);
+
+  // フォント＋レイアウト描画を待つ
+  await waitForFonts();
+  // ブラウザに1フレーム描画させる
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  const filename = `VetSOAP_${todayStr().replace(/年|月/g,"-").replace("日","")}_${results.length}頭.pdf`;
+  try {
+    await html2pdf()
       .set({
         margin: [10, 8, 10, 8],
         filename,
-        image: { type:"jpeg", quality:0.95 },
-        html2canvas: { scale:2, useCORS:true, logging:false },
+        image: { type:"jpeg", quality:0.98 },
+        html2canvas: { scale:2, useCORS:true, logging:false, allowTaint:true, windowWidth:794 },
         jsPDF: { unit:"mm", format:"a4", orientation:"portrait" },
         pagebreak: { mode:["avoid-all","css"] }
       })
       .from(container)
-      .save()
-      .then(() => document.body.removeChild(container));
-  });
+      .save();
+  } finally {
+    document.body.removeChild(container);
+  }
 }
 
 
