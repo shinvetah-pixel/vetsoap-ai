@@ -25,82 +25,213 @@ const SAMPLES = {
 // ── Claude API ────────────────────────────────────────────────────────────
 
 // ── PDF ───────────────────────────────────────────────────────────────────
-function loadJsPDF() {
-  return new Promise(resolve => {
-    if (window.jspdf) { resolve(window.jspdf.jsPDF); return; }
-    const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
-    s.onload = () => resolve(window.jspdf.jsPDF); document.head.appendChild(s);
-  });
-}
+// ── PDF（日本語フォント対応版） ───────────────────────────────────────────
 function todayStr() { const d=new Date(); return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`; }
 
+// jsPDF + Noto Sans JP フォントを動的ロード
+async function loadJsPDFWithFont() {
+  // 1) jsPDF本体
+  if (!window.jspdf) {
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+      s.onload = res; s.onerror = rej; document.head.appendChild(s);
+    });
+  }
+  const JsPDF = window.jspdf.jsPDF;
+
+  // 2) フォントキャッシュ確認
+  if (window.__notoFontB64) return { JsPDF, fontB64: window.__notoFontB64 };
+
+  // 3) Noto Sans JP Regular (ttf) を fetch → base64
+  // Google Fonts Static API から日本語対応の ttf を取得
+  const FONT_URL = "https://fonts.gstatic.com/s/notosansjp/v53/-F6jfjtqLzI2JPCgQBnw7HFyzSD-AsregP8VFBEj75s.ttf";
+  const resp = await fetch(FONT_URL);
+  if (!resp.ok) throw new Error("フォント取得失敗");
+  const buf = await resp.arrayBuffer();
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+  window.__notoFontB64 = b64;
+  return { JsPDF, fontB64: b64 };
+}
+
 async function downloadPDF(results) {
-  const JsPDF = await loadJsPDF();
+  const { JsPDF, fontB64 } = await loadJsPDFWithFont();
+
   const doc = new JsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+
+  // フォント登録
+  doc.addFileToVFS("NotoSansJP.ttf", fontB64);
+  doc.addFont("NotoSansJP.ttf", "NotoSansJP", "normal");
+  // bold は同フォントで代替（太字はfontSizeで表現）
+  doc.addFont("NotoSansJP.ttf", "NotoSansJP", "bold");
+
+  // ヘルパー：フォントセット（日本語フォントを常に使用）
+  const sf = (style="normal") => doc.setFont("NotoSansJP", style);
+
   const W=210, M=18, CW=W-M*2;
   const NAVY=[31,78,121], BLUE=[46,134,193], GRAY=[100,110,130], LGRAY=[230,235,242];
   const SC = { S:[34,160,100], O:[50,120,210], A:[190,145,20], P:[150,80,200] };
   let y=0, pg=1;
 
-  function np() { doc.addPage(); pg++; y=18; doc.setDrawColor(...BLUE); doc.setLineWidth(0.3); doc.line(M,12,W-M,12); doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.text("VetSOAP AI — 診察カルテ",M,10); doc.text(`${pg}P`,W-M,10,{align:"right"}); }
+  function np() {
+    doc.addPage(); pg++; y=18;
+    doc.setDrawColor(...BLUE); doc.setLineWidth(0.3); doc.line(M,12,W-M,12);
+    doc.setFontSize(7.5); doc.setTextColor(...GRAY); sf();
+    doc.text("VetSOAP AI — 診察カルテ",M,10); doc.text(`${pg}P`,W-M,10,{align:"right"});
+  }
   function ck(n=10) { if(y+n>275) np(); }
   function fillR(x,iy,w,h,r,fill) { doc.setFillColor(...fill); doc.roundedRect(x,iy,w,h,r,r,"F"); }
-  function sh(label,color) { ck(11); fillR(M,y,CW,7.5,1.5,[...color.map(v=>Math.min(255,v+145))]); doc.setFontSize(8.5); doc.setTextColor(...color); doc.setFont(undefined,"bold"); doc.text(label,M+3,y+5.3); doc.setFont(undefined,"normal"); y+=9.5; }
-  function bl(text,dc=GRAY) { if(!text) return; ck(8); doc.setFillColor(...dc); doc.circle(M+4.5,y-0.8,0.9,"F"); const ls=doc.splitTextToSize(text,CW-10); doc.setFontSize(8.5); doc.setTextColor(50,60,80); doc.setFont(undefined,"normal"); doc.text(ls,M+7.5,y); y+=ls.length*4.8+0.8; }
-  function kv(label,val) { if(!val) return; ck(7); doc.setFontSize(8); doc.setTextColor(...GRAY); doc.setFont(undefined,"bold"); doc.text(label+"：",M+2,y); doc.setFont(undefined,"normal"); doc.setTextColor(50,60,80); const ls=doc.splitTextToSize(val,CW-22); doc.text(ls,M+22,y); y+=Math.max(5.5,ls.length*4.8); }
+  function sh(label,color) {
+    ck(11); fillR(M,y,CW,7.5,1.5,[...color.map(v=>Math.min(255,v+145))]);
+    doc.setFontSize(8.5); doc.setTextColor(...color); sf("bold");
+    doc.text(label,M+3,y+5.3); sf(); y+=9.5;
+  }
+  function bl(text,dc=GRAY) {
+    if(!text) return; ck(8);
+    doc.setFillColor(...dc); doc.circle(M+4.5,y-0.8,0.9,"F");
+    const ls=doc.splitTextToSize(text,CW-10);
+    doc.setFontSize(8.5); doc.setTextColor(50,60,80); sf();
+    doc.text(ls,M+7.5,y); y+=ls.length*4.8+0.8;
+  }
+  function kv(label,val) {
+    if(!val) return; ck(7);
+    doc.setFontSize(8); doc.setTextColor(...GRAY); sf("bold");
+    doc.text(label+"：",M+2,y); sf();
+    doc.setTextColor(50,60,80);
+    const ls=doc.splitTextToSize(val,CW-22);
+    doc.text(ls,M+22,y); y+=Math.max(5.5,ls.length*4.8);
+  }
 
-  // cover
+  // ── 表紙
   doc.setFillColor(...NAVY); doc.rect(0,0,W,34,"F");
-  doc.setFontSize(10); doc.setTextColor(255,255,255); doc.setFont(undefined,"normal"); doc.text("VetSOAP AI",M,13);
-  doc.setFontSize(17); doc.setFont(undefined,"bold"); doc.text("診察カルテ",M,25);
-  doc.setFontSize(8.5); doc.setTextColor(190,215,240); doc.setFont(undefined,"normal"); doc.text(todayStr(),W-M,13,{align:"right"}); doc.text(`${results.length}頭分`,W-M,21,{align:"right"});
+  doc.setFontSize(10); doc.setTextColor(255,255,255); sf();
+  doc.text("VetSOAP AI",M,13);
+  doc.setFontSize(17); sf("bold"); doc.text("診察カルテ",M,25);
+  doc.setFontSize(8.5); doc.setTextColor(190,215,240); sf();
+  doc.text(todayStr(),W-M,13,{align:"right"});
+  doc.text(`${results.length}頭分`,W-M,21,{align:"right"});
   y=42;
-  fillR(M,y,CW,20,2.5,[245,250,255]); doc.setDrawColor(...BLUE); doc.setLineWidth(0.4); doc.roundedRect(M,y,CW,20,2.5,2.5,"S");
-  doc.setFontSize(8); doc.setTextColor(...NAVY); doc.setFont(undefined,"bold"); doc.text("🔒  セキュリティ",M+4,y+6.5);
-  doc.setFont(undefined,"normal"); doc.setTextColor(...GRAY); doc.text("このPDFはクラウドに送信されていません。お使いの端末のダウンロードフォルダに直接保存されています。",M+4,y+12,{maxWidth:CW-8}); doc.text("診察内容は院内で適切に管理してください。",M+4,y+17,{maxWidth:CW-8}); y+=26;
 
+  fillR(M,y,CW,20,2.5,[245,250,255]);
+  doc.setDrawColor(...BLUE); doc.setLineWidth(0.4); doc.roundedRect(M,y,CW,20,2.5,2.5,"S");
+  doc.setFontSize(8); doc.setTextColor(...NAVY); sf("bold");
+  doc.text("【セキュリティ】",M+4,y+6.5); sf();
+  doc.setTextColor(...GRAY);
+  doc.text("このPDFはクラウドに送信されていません。お使いの端末のダウンロードフォルダに直接保存されています。",M+4,y+12,{maxWidth:CW-8});
+  doc.text("診察内容は院内で適切に管理してください。",M+4,y+17,{maxWidth:CW-8});
+  y+=26;
+
+  // ── 各患者
   results.forEach((r,idx) => {
     const { soap, seg } = r;
-    ck(18); doc.setFillColor(...NAVY); doc.rect(M,y,CW,11,"F"); doc.setFillColor(...BLUE); doc.rect(M,y,4,11,"F");
-    doc.setFontSize(10); doc.setTextColor(255,255,255); doc.setFont(undefined,"bold");
-    const nm=soap?.patient?.名前||`患者 ${idx+1}`; doc.text(`${idx+1}.  ${nm}`,M+7,y+7.5);
+    ck(18);
+    doc.setFillColor(...NAVY); doc.rect(M,y,CW,11,"F");
+    doc.setFillColor(...BLUE); doc.rect(M,y,4,11,"F");
+    doc.setFontSize(10); doc.setTextColor(255,255,255); sf("bold");
+    const nm=soap?.patient?.名前||`患者 ${idx+1}`;
+    doc.text(`${idx+1}.  ${nm}`,M+7,y+7.5);
     const sub=[soap?.patient?.推定動物種,soap?.patient?.推定品種,soap?.patient?.推定年齢].filter(Boolean).join(" / ");
-    doc.setFontSize(8); doc.setFont(undefined,"normal"); doc.setTextColor(180,210,240); doc.text(sub,M+7+doc.getTextWidth(`${idx+1}.  ${nm}`)+4,y+7.5);
+    doc.setFontSize(8); sf(); doc.setTextColor(180,210,240);
+    doc.text(sub,M+7+doc.getTextWidth(`${idx+1}.  ${nm}`)+4,y+7.5);
     y+=14;
 
+    // S
     sh("S — 稟告（Subjective）",SC.S);
     if(soap?.S?.主訴) kv("主訴",soap.S.主訴);
     (soap?.S?.稟告詳細||[]).forEach(t=>bl(t,SC.S));
     const excl=soap?.S?.除外した発言||[];
-    if(excl.length>0) { ck(6); doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.setFont(undefined,"italic"); doc.text("除外: "+excl.join("、"),M+2,y,{maxWidth:CW-4}); y+=5.5; }
+    if(excl.length>0) {
+      ck(6); doc.setFontSize(7.5); doc.setTextColor(...GRAY); sf();
+      doc.text("除外: "+excl.join("、"),M+2,y,{maxWidth:CW-4}); y+=5.5;
+    }
     y+=2;
 
+    // O
     sh("O — 客観所見（Objective）",SC.O);
-    const v=soap?.O?.バイタル||{}; const vit=[["体温",v.体温],["心拍数",v.心拍数],["呼吸数",v.呼吸数],["体重",v.体重]].filter(x=>x[1]);
-    if(vit.length>0) { ck(17); const bw=(CW-6)/4; vit.slice(0,4).forEach(([k,val],i)=>{ const bx=M+i*(bw+2); fillR(bx,y,bw,13,2,[244,247,252]); doc.setFontSize(7); doc.setTextColor(...GRAY); doc.setFont(undefined,"normal"); doc.text(k,bx+bw/2,y+4,{align:"center"}); doc.setFontSize(9.5); doc.setTextColor(...BLUE); doc.setFont(undefined,"bold"); doc.text(String(val),bx+bw/2,y+10,{align:"center"}); }); y+=16; }
+    const v=soap?.O?.バイタル||{};
+    const vit=[["体温",v.体温],["心拍数",v.心拍数],["呼吸数",v.呼吸数],["体重",v.体重]].filter(x=>x[1]);
+    if(vit.length>0) {
+      ck(17); const bw=(CW-6)/4;
+      vit.slice(0,4).forEach(([k,val],i)=>{
+        const bx=M+i*(bw+2); fillR(bx,y,bw,13,2,[244,247,252]);
+        doc.setFontSize(7); doc.setTextColor(...GRAY); sf();
+        doc.text(k,bx+bw/2,y+4,{align:"center"});
+        doc.setFontSize(9.5); doc.setTextColor(...BLUE); sf("bold");
+        doc.text(String(val),bx+bw/2,y+10,{align:"center"});
+      }); y+=16;
+    }
     [...(soap?.O?.身体検査||[]),...(soap?.O?.実施検査結果||[])].forEach(t=>bl(t,SC.O)); y+=2;
 
+    // A
     sh("A — 評価（Assessment）",SC.A);
-    if(soap?.A?.主診断) { ck(10); fillR(M,y,CW,8.5,2,[255,251,230]); doc.setFontSize(9); doc.setTextColor(...SC.A); doc.setFont(undefined,"bold"); doc.text("主診断：",M+3,y+6); doc.setTextColor(50,60,80); doc.text(soap.A.主診断,M+22,y+6); y+=11; }
-    if((soap?.A?.鑑別疾患||[]).length>0) { ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); doc.setFont(undefined,"bold"); doc.text("鑑別疾患（DDx）",M+2,y); y+=5; const pc={high:"⬛ 優先",mid:"◼ 中",low:"◻ 低"}; soap.A.鑑別疾患.forEach(d=>{ ck(8); doc.setFontSize(8); doc.setFont(undefined,"normal"); doc.setTextColor(80,90,110); doc.text(`${pc[d.優先度]||d.優先度}  ${d.疾患名}`,M+4,y); if(d.根拠){ doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.text(`（${d.根拠}）`,M+4,y+4.5); y+=4; } y+=5.5; }); }
+    if(soap?.A?.主診断) {
+      ck(10); fillR(M,y,CW,8.5,2,[255,251,230]);
+      doc.setFontSize(9); doc.setTextColor(...SC.A); sf("bold"); doc.text("主診断：",M+3,y+6);
+      doc.setTextColor(50,60,80); sf(); doc.text(soap.A.主診断,M+22,y+6); y+=11;
+    }
+    if((soap?.A?.鑑別疾患||[]).length>0) {
+      ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); sf("bold");
+      doc.text("鑑別疾患（DDx）",M+2,y); y+=5;
+      const pc={high:"[優先]",mid:"[中]",low:"[低]"};
+      soap.A.鑑別疾患.forEach(d=>{
+        ck(8); doc.setFontSize(8); sf(); doc.setTextColor(80,90,110);
+        doc.text(`${pc[d.優先度]||d.優先度}  ${d.疾患名}`,M+4,y);
+        if(d.根拠){ doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.text(`（${d.根拠}）`,M+4,y+4.5); y+=4; }
+        y+=5.5;
+      });
+    }
     (soap?.A?.臨床推定||[]).forEach(t=>bl(t,SC.A)); y+=2;
 
+    // P
     sh("P — 治療計画（Plan）",SC.P);
-    if((soap?.P?.検査計画||[]).length>0) { doc.setFontSize(8); doc.setTextColor(...GRAY); doc.setFont(undefined,"bold"); doc.text("検査計画",M+2,y); y+=5; soap.P.検査計画.forEach(t=>bl(t,SC.P)); }
-    if((soap?.P?.["処置・投薬"]||[]).length>0) { ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); doc.setFont(undefined,"bold"); doc.text("処置・投薬",M+2,y); y+=5; soap.P["処置・投薬"].forEach(d=>bl([d.内容,d.用量,d.経路].filter(Boolean).join("　/　"),SC.P)); }
-    if((soap?.P?.飼い主指示||[]).length>0) { ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); doc.setFont(undefined,"bold"); doc.text("飼い主指示",M+2,y); y+=5; soap.P.飼い主指示.forEach(t=>bl(t,[150,80,200])); }
-    if(soap?.P?.IC) { ck(12); fillR(M,y,CW,10,2,[250,245,255]); doc.setFontSize(7.5); doc.setTextColor(140,80,200); doc.setFont(undefined,"bold"); doc.text("IC / 飼い主の心理的背景：",M+3,y+4); doc.setFont(undefined,"normal"); doc.setTextColor(80,60,100); const ls=doc.splitTextToSize(soap.P.IC,CW-48); doc.text(ls,M+44,y+4); y+=Math.max(12,ls.length*4.5+4); }
-    if(soap?.P?.再診) { ck(10); fillR(M,y,CW,8.5,2,[242,250,255]); doc.setFontSize(8); doc.setTextColor(...BLUE); doc.setFont(undefined,"bold"); doc.text("📅  再診：",M+3,y+6); doc.setFont(undefined,"normal"); doc.setTextColor(50,60,80); doc.text(soap.P.再診,M+22,y+6); y+=11; }
+    if((soap?.P?.検査計画||[]).length>0) {
+      doc.setFontSize(8); doc.setTextColor(...GRAY); sf("bold"); doc.text("検査計画",M+2,y); y+=5;
+      soap.P.検査計画.forEach(t=>bl(t,SC.P));
+    }
+    if((soap?.P?.["処置・投薬"]||[]).length>0) {
+      ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); sf("bold"); doc.text("処置・投薬",M+2,y); y+=5;
+      soap.P["処置・投薬"].forEach(d=>bl([d.内容,d.用量,d.経路].filter(Boolean).join("　/　"),SC.P));
+    }
+    if((soap?.P?.飼い主指示||[]).length>0) {
+      ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); sf("bold"); doc.text("飼い主指示",M+2,y); y+=5;
+      soap.P.飼い主指示.forEach(t=>bl(t,[150,80,200]));
+    }
+    if(soap?.P?.IC) {
+      ck(12); fillR(M,y,CW,10,2,[250,245,255]);
+      doc.setFontSize(7.5); doc.setTextColor(140,80,200); sf("bold");
+      doc.text("IC / 飼い主の心理的背景：",M+3,y+4); sf();
+      doc.setTextColor(80,60,100);
+      const ls=doc.splitTextToSize(soap.P.IC,CW-48);
+      doc.text(ls,M+44,y+4); y+=Math.max(12,ls.length*4.5+4);
+    }
+    if(soap?.P?.再診) {
+      ck(10); fillR(M,y,CW,8.5,2,[242,250,255]);
+      doc.setFontSize(8); doc.setTextColor(...BLUE); sf("bold"); doc.text("再診：",M+3,y+6); sf();
+      doc.setTextColor(50,60,80); doc.text(soap.P.再診,M+18,y+6); y+=11;
+    }
 
+    // 原文
     y+=4; ck(16);
-    fillR(M,y,CW,8,1.5,LGRAY); doc.setFontSize(8); doc.setTextColor(...NAVY); doc.setFont(undefined,"bold"); doc.text("原文（文字起こし）",M+3,y+5.5); y+=10;
-    const rawLines=doc.splitTextToSize(seg.replace(/\n/g," "),CW-4); const rawH=Math.min(rawLines.length,28)*4.5+4;
-    ck(rawH); fillR(M,y,CW,rawH,2,[248,250,253]); doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.setFont(undefined,"normal"); doc.text(rawLines.slice(0,28),M+3,y+4); if(rawLines.length>28){doc.setFontSize(7);doc.setTextColor(180,180,180);doc.text("…（省略）",M+3,y+rawH-2);} y+=rawH+10;
+    fillR(M,y,CW,8,1.5,LGRAY); doc.setFontSize(8); doc.setTextColor(...NAVY); sf("bold");
+    doc.text("原文（文字起こし）",M+3,y+5.5); y+=10;
+    const rawLines=doc.splitTextToSize(seg.replace(/\n/g," "),CW-4);
+    const rawH=Math.min(rawLines.length,28)*4.5+4;
+    ck(rawH); fillR(M,y,CW,rawH,2,[248,250,253]);
+    doc.setFontSize(7.5); doc.setTextColor(...GRAY); sf();
+    doc.text(rawLines.slice(0,28),M+3,y+4);
+    if(rawLines.length>28){ doc.setFontSize(7); doc.setTextColor(180,180,180); doc.text("…（省略）",M+3,y+rawH-2); }
+    y+=rawH+10;
   });
 
+  // フッター
   const tp=doc.getNumberOfPages();
-  for(let i=1;i<=tp;i++){ doc.setPage(i); doc.setDrawColor(...BLUE); doc.setLineWidth(0.3); doc.line(M,285,W-M,285); doc.setFontSize(7); doc.setTextColor(...GRAY); doc.setFont(undefined,"normal"); doc.text(`VetSOAP AI — ${todayStr()} 出力　院内管理資料`,M,290); doc.text(`${i} / ${tp}`,W-M,290,{align:"right"}); }
+  for(let i=1;i<=tp;i++){
+    doc.setPage(i);
+    doc.setDrawColor(...BLUE); doc.setLineWidth(0.3); doc.line(M,285,W-M,285);
+    doc.setFontSize(7); doc.setTextColor(...GRAY); sf();
+    doc.text(`VetSOAP AI — ${todayStr()} 出力　院内管理資料`,M,290);
+    doc.text(`${i} / ${tp}`,W-M,290,{align:"right"});
+  }
   doc.save(`VetSOAP_${todayStr().replace(/年|月/g,"-").replace("日","")}_${results.length}頭.pdf`);
 }
 
