@@ -1,374 +1,607 @@
 "use client";
-import { useState, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
-// ── Sample transcript ──────────────────────────────────────────────────────
-const SAMPLE = `[診察開始]
-獣医師: こんにちは、今日はどうされましたか？
-飼い主: あ、先生こんにちは。今日はムギのことで…最近ちょっと心配で。
-獣医師: そうですか、どんな様子ですか？
-飼い主: 3日前から急にご飯を食べなくなっちゃって。昨日は2回吐きました。
+// ── Samples ───────────────────────────────────────────────────────────────
+const SAMPLES = {
+  single: `獣医師: 今日はどうされましたか？
+飼い主: ポチが3日前から食欲が落ちて、昨日2回吐きました。
 獣医師: 嘔吐の内容は？
-飼い主: 最初は食べたものが出て、2回目は黄色い液体でした。
-獣医師: 水は飲んでますか？
-飼い主: 飲んでるんですけど、なんか少ない気がして…。いつもと違う気がするだけかもしれませんけど。
-獣医師: 排便・排尿は？
-飼い主: 昨日から便が出ていないです。おしっこはしてます。
-獣医師: 元気はありますか？
-飼い主: なんか以前より大人しいような…でもよく分からないです。あ、あと関係ないかもですけど先週引っ越したんですよ。
-獣医師: それは少しストレスになってるかもしれませんね。では触診しますね。
+飼い主: 最初は食べたものが出て、2回目は黄色い液体でした。水は飲んでますけど少ない気がして。
+獣医師: 排便は？
+飼い主: 昨日から便が出ていないです。
+獣医師: では触診しますね。体温39.1℃、心拍数180、呼吸数28、体重4.2kg（前回4.5kgから0.3kg減）。腹部右前に軽度の抵抗感と疼痛反応あり。皮膚ツルゴール低下、CRT2秒、粘膜やや乾燥。
+獣医師: 軽度の脱水と腸閉塞が疑われます。X線と血液検査を実施しましょう。`,
+  multi: `獣医師: 今日はどうされましたか？
+飼い主A: ポチが3日前から食欲が落ちて、昨日2回吐きました。黄色い液体が出て。
+獣医師: では触診します。体温39.1℃、心拍数180、体重4.2kg。腹部右前に疼痛反応あり。皮膚ツルゴール低下、CRT2秒。軽度の脱水が疑われます。X線と血液検査を実施しましょう。
 
-[身体検査]
-体温は39.1度。心拍数180。呼吸数28。
-腹部を触ると右前腹部に軽度の抵抗感、疼痛反応あり。
-皮膚ツルゴール低下を認める。口腔粘膜はやや乾燥、CRT2秒。
-体重は4.2kg、前回から0.3kg減少。
-聴診では心肺音に異常なし。リンパ節腫脹なし。
+次、タマちゃんで。
 
-獣医師: 少し脱水気味ですね。腸の動きも少し弱いです。
-飼い主: 大丈夫ですか？重大な病気じゃないですよね？
-獣医師: まず検査してみましょう。X線と血液検査をとります。
-[診察終了]`;
-
-// ── Color config ──────────────────────────────────────────────────────────
-const C = {
-  S: { accent:"#34d399", bg:"rgba(52,211,153,0.07)", border:"rgba(52,211,153,0.2)", label:"S — Subjective（稟告）", icon:"💬" },
-  O: { accent:"#60a5fa", bg:"rgba(96,165,250,0.07)", border:"rgba(96,165,250,0.2)", label:"O — Objective（客観所見）", icon:"🔬" },
-  A: { accent:"#fbbf24", bg:"rgba(251,191,36,0.07)",  border:"rgba(251,191,36,0.2)",  label:"A — Assessment（評価）", icon:"📋" },
-  P: { accent:"#c084fc", bg:"rgba(192,132,252,0.07)", border:"rgba(192,132,252,0.2)", label:"P — Plan（治療計画）", icon:"💊" },
+飼い主B: タマが2日前から右の後ろ足をひきずってて。急に。水をすごく飲むようになって、おしっこも多くて。
+飼い主B: なんかやせてきた気がして。もう歳だから仕方ないですよね…
+獣医師: 13歳でしたね。体重3.8kg（前回4.4kg）、体温38.9℃、心拍数92。右後肢の筋肉量低下、触ると疼痛あり。粘膜軽度蒼白、CRT2秒。心雑音グレード2が確認されます。血液検査：BUN 45mg/dL、クレアチニン2.8mg/dL、血糖値280mg/dL。糖尿病と慢性腎臓病が疑われます。インスリン0.5単位を1日2回、メロキシカム0.1mg/kgを1日1回2週間。1週間後に再検査。`
 };
 
-// ── Small UI helpers ──────────────────────────────────────────────────────
-function Pill({ text, accent }) {
+// ── Claude API ────────────────────────────────────────────────────────────
+const SYSTEM_PROMPT = `あなたは日本の小動物臨床に精通した獣医師アシスタントです。
+診察音声トランスクリプトをSOAP形式に変換してください。
+【除外】挨拶・雑談・天気・会計・業務連絡
+【S】飼い主の事実申告のみ。推測・感想は除外へ。獣医用語変換（やせた→削痩の稟告あり、足をひきずる→右後肢跛行の稟告あり、水をよく飲む→多飲多尿の稟告あり）
+【O】獣医師が測定・観察した数値と所見のみ。単位付きで。
+【A】主診断＋鑑別疾患（優先度high/mid/low付き）
+【P】検査・処置投薬（薬剤名・用量・経路）・飼い主指示・IC（飼い主の心理的背景も記録）・再診
+必ず以下のJSONのみで出力。説明文・マークダウン記号は不要。
+{"patient":{"推定動物種":"","推定品種":"","推定年齢":"","名前":""},"S":{"主訴":"","稟告詳細":[""],"除外した発言":[""]},"O":{"バイタル":{"体温":"","心拍数":"","呼吸数":"","体重":""},"身体検査":[""],"実施検査結果":[""]},"A":{"主診断":"","鑑別疾患":[{"疾患名":"","根拠":"","優先度":"high"}],"臨床推定":[""]},"P":{"検査計画":[""],"処置・投薬":[{"内容":"","用量":"","経路":""}],"飼い主指示":[""],"IC":"","再診":""}}`;
+
+async function callClaude(seg) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: `以下の診察トランスクリプトをSOAPに変換してください：\n\n${seg}` }] })
+  });
+  const data = await res.json();
+  const raw = (data.content || []).map(c => c.text || "").join("");
+  const clean = raw.replace(/^```json\s*/i,"").replace(/^```\s*/i,"").replace(/```\s*$/i,"").trim();
+  try { return JSON.parse(clean); }
+  catch { const m = clean.match(/\{[\s\S]*\}/); if (m) return JSON.parse(m[0]); throw new Error("パース失敗"); }
+}
+
+const SPLIT_RE = /^.*(次[、,\s　]*(?:の子は?|に?)?[、,\s　]*|別の[、,\s　]*|(?:は|が)?おしまい|次の患者|続いて).*/i;
+function splitByPatient(text) {
+  const lines = text.split("\n"); const segs = []; let cur = []; let split = false;
+  for (const line of lines) {
+    if (SPLIT_RE.test(line.trim()) && cur.length > 0) { segs.push(cur.join("\n").trim()); cur = []; split = true; continue; }
+    cur.push(line);
+  }
+  if (cur.length > 0) segs.push(cur.join("\n").trim());
+  return split ? segs.filter(s => s.length > 20) : [text];
+}
+
+// ── PDF ───────────────────────────────────────────────────────────────────
+function loadJsPDF() {
+  return new Promise(resolve => {
+    if (window.jspdf) { resolve(window.jspdf.jsPDF); return; }
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    s.onload = () => resolve(window.jspdf.jsPDF); document.head.appendChild(s);
+  });
+}
+function todayStr() { const d=new Date(); return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`; }
+
+async function downloadPDF(results) {
+  const JsPDF = await loadJsPDF();
+  const doc = new JsPDF({ orientation:"portrait", unit:"mm", format:"a4" });
+  const W=210, M=18, CW=W-M*2;
+  const NAVY=[31,78,121], BLUE=[46,134,193], GRAY=[100,110,130], LGRAY=[230,235,242];
+  const SC = { S:[34,160,100], O:[50,120,210], A:[190,145,20], P:[150,80,200] };
+  let y=0, pg=1;
+
+  function np() { doc.addPage(); pg++; y=18; doc.setDrawColor(...BLUE); doc.setLineWidth(0.3); doc.line(M,12,W-M,12); doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.text("VetSOAP AI — 診察カルテ",M,10); doc.text(`${pg}P`,W-M,10,{align:"right"}); }
+  function ck(n=10) { if(y+n>275) np(); }
+  function fillR(x,iy,w,h,r,fill) { doc.setFillColor(...fill); doc.roundedRect(x,iy,w,h,r,r,"F"); }
+  function sh(label,color) { ck(11); fillR(M,y,CW,7.5,1.5,[...color.map(v=>Math.min(255,v+145))]); doc.setFontSize(8.5); doc.setTextColor(...color); doc.setFont(undefined,"bold"); doc.text(label,M+3,y+5.3); doc.setFont(undefined,"normal"); y+=9.5; }
+  function bl(text,dc=GRAY) { if(!text) return; ck(8); doc.setFillColor(...dc); doc.circle(M+4.5,y-0.8,0.9,"F"); const ls=doc.splitTextToSize(text,CW-10); doc.setFontSize(8.5); doc.setTextColor(50,60,80); doc.setFont(undefined,"normal"); doc.text(ls,M+7.5,y); y+=ls.length*4.8+0.8; }
+  function kv(label,val) { if(!val) return; ck(7); doc.setFontSize(8); doc.setTextColor(...GRAY); doc.setFont(undefined,"bold"); doc.text(label+"：",M+2,y); doc.setFont(undefined,"normal"); doc.setTextColor(50,60,80); const ls=doc.splitTextToSize(val,CW-22); doc.text(ls,M+22,y); y+=Math.max(5.5,ls.length*4.8); }
+
+  // cover
+  doc.setFillColor(...NAVY); doc.rect(0,0,W,34,"F");
+  doc.setFontSize(10); doc.setTextColor(255,255,255); doc.setFont(undefined,"normal"); doc.text("VetSOAP AI",M,13);
+  doc.setFontSize(17); doc.setFont(undefined,"bold"); doc.text("診察カルテ",M,25);
+  doc.setFontSize(8.5); doc.setTextColor(190,215,240); doc.setFont(undefined,"normal"); doc.text(todayStr(),W-M,13,{align:"right"}); doc.text(`${results.length}頭分`,W-M,21,{align:"right"});
+  y=42;
+  fillR(M,y,CW,20,2.5,[245,250,255]); doc.setDrawColor(...BLUE); doc.setLineWidth(0.4); doc.roundedRect(M,y,CW,20,2.5,2.5,"S");
+  doc.setFontSize(8); doc.setTextColor(...NAVY); doc.setFont(undefined,"bold"); doc.text("🔒  セキュリティ",M+4,y+6.5);
+  doc.setFont(undefined,"normal"); doc.setTextColor(...GRAY); doc.text("このPDFはクラウドに送信されていません。お使いの端末のダウンロードフォルダに直接保存されています。",M+4,y+12,{maxWidth:CW-8}); doc.text("診察内容は院内で適切に管理してください。",M+4,y+17,{maxWidth:CW-8}); y+=26;
+
+  results.forEach((r,idx) => {
+    const { soap, seg } = r;
+    ck(18); doc.setFillColor(...NAVY); doc.rect(M,y,CW,11,"F"); doc.setFillColor(...BLUE); doc.rect(M,y,4,11,"F");
+    doc.setFontSize(10); doc.setTextColor(255,255,255); doc.setFont(undefined,"bold");
+    const nm=soap?.patient?.名前||`患者 ${idx+1}`; doc.text(`${idx+1}.  ${nm}`,M+7,y+7.5);
+    const sub=[soap?.patient?.推定動物種,soap?.patient?.推定品種,soap?.patient?.推定年齢].filter(Boolean).join(" / ");
+    doc.setFontSize(8); doc.setFont(undefined,"normal"); doc.setTextColor(180,210,240); doc.text(sub,M+7+doc.getTextWidth(`${idx+1}.  ${nm}`)+4,y+7.5);
+    y+=14;
+
+    sh("S — 稟告（Subjective）",SC.S);
+    if(soap?.S?.主訴) kv("主訴",soap.S.主訴);
+    (soap?.S?.稟告詳細||[]).forEach(t=>bl(t,SC.S));
+    const excl=soap?.S?.除外した発言||[];
+    if(excl.length>0) { ck(6); doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.setFont(undefined,"italic"); doc.text("除外: "+excl.join("、"),M+2,y,{maxWidth:CW-4}); y+=5.5; }
+    y+=2;
+
+    sh("O — 客観所見（Objective）",SC.O);
+    const v=soap?.O?.バイタル||{}; const vit=[["体温",v.体温],["心拍数",v.心拍数],["呼吸数",v.呼吸数],["体重",v.体重]].filter(x=>x[1]);
+    if(vit.length>0) { ck(17); const bw=(CW-6)/4; vit.slice(0,4).forEach(([k,val],i)=>{ const bx=M+i*(bw+2); fillR(bx,y,bw,13,2,[244,247,252]); doc.setFontSize(7); doc.setTextColor(...GRAY); doc.setFont(undefined,"normal"); doc.text(k,bx+bw/2,y+4,{align:"center"}); doc.setFontSize(9.5); doc.setTextColor(...BLUE); doc.setFont(undefined,"bold"); doc.text(String(val),bx+bw/2,y+10,{align:"center"}); }); y+=16; }
+    [...(soap?.O?.身体検査||[]),...(soap?.O?.実施検査結果||[])].forEach(t=>bl(t,SC.O)); y+=2;
+
+    sh("A — 評価（Assessment）",SC.A);
+    if(soap?.A?.主診断) { ck(10); fillR(M,y,CW,8.5,2,[255,251,230]); doc.setFontSize(9); doc.setTextColor(...SC.A); doc.setFont(undefined,"bold"); doc.text("主診断：",M+3,y+6); doc.setTextColor(50,60,80); doc.text(soap.A.主診断,M+22,y+6); y+=11; }
+    if((soap?.A?.鑑別疾患||[]).length>0) { ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); doc.setFont(undefined,"bold"); doc.text("鑑別疾患（DDx）",M+2,y); y+=5; const pc={high:"⬛ 優先",mid:"◼ 中",low:"◻ 低"}; soap.A.鑑別疾患.forEach(d=>{ ck(8); doc.setFontSize(8); doc.setFont(undefined,"normal"); doc.setTextColor(80,90,110); doc.text(`${pc[d.優先度]||d.優先度}  ${d.疾患名}`,M+4,y); if(d.根拠){ doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.text(`（${d.根拠}）`,M+4,y+4.5); y+=4; } y+=5.5; }); }
+    (soap?.A?.臨床推定||[]).forEach(t=>bl(t,SC.A)); y+=2;
+
+    sh("P — 治療計画（Plan）",SC.P);
+    if((soap?.P?.検査計画||[]).length>0) { doc.setFontSize(8); doc.setTextColor(...GRAY); doc.setFont(undefined,"bold"); doc.text("検査計画",M+2,y); y+=5; soap.P.検査計画.forEach(t=>bl(t,SC.P)); }
+    if((soap?.P?.["処置・投薬"]||[]).length>0) { ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); doc.setFont(undefined,"bold"); doc.text("処置・投薬",M+2,y); y+=5; soap.P["処置・投薬"].forEach(d=>bl([d.内容,d.用量,d.経路].filter(Boolean).join("　/　"),SC.P)); }
+    if((soap?.P?.飼い主指示||[]).length>0) { ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); doc.setFont(undefined,"bold"); doc.text("飼い主指示",M+2,y); y+=5; soap.P.飼い主指示.forEach(t=>bl(t,[150,80,200])); }
+    if(soap?.P?.IC) { ck(12); fillR(M,y,CW,10,2,[250,245,255]); doc.setFontSize(7.5); doc.setTextColor(140,80,200); doc.setFont(undefined,"bold"); doc.text("IC / 飼い主の心理的背景：",M+3,y+4); doc.setFont(undefined,"normal"); doc.setTextColor(80,60,100); const ls=doc.splitTextToSize(soap.P.IC,CW-48); doc.text(ls,M+44,y+4); y+=Math.max(12,ls.length*4.5+4); }
+    if(soap?.P?.再診) { ck(10); fillR(M,y,CW,8.5,2,[242,250,255]); doc.setFontSize(8); doc.setTextColor(...BLUE); doc.setFont(undefined,"bold"); doc.text("📅  再診：",M+3,y+6); doc.setFont(undefined,"normal"); doc.setTextColor(50,60,80); doc.text(soap.P.再診,M+22,y+6); y+=11; }
+
+    y+=4; ck(16);
+    fillR(M,y,CW,8,1.5,LGRAY); doc.setFontSize(8); doc.setTextColor(...NAVY); doc.setFont(undefined,"bold"); doc.text("原文（文字起こし）",M+3,y+5.5); y+=10;
+    const rawLines=doc.splitTextToSize(seg.replace(/\n/g," "),CW-4); const rawH=Math.min(rawLines.length,28)*4.5+4;
+    ck(rawH); fillR(M,y,CW,rawH,2,[248,250,253]); doc.setFontSize(7.5); doc.setTextColor(...GRAY); doc.setFont(undefined,"normal"); doc.text(rawLines.slice(0,28),M+3,y+4); if(rawLines.length>28){doc.setFontSize(7);doc.setTextColor(180,180,180);doc.text("…（省略）",M+3,y+rawH-2);} y+=rawH+10;
+  });
+
+  const tp=doc.getNumberOfPages();
+  for(let i=1;i<=tp;i++){ doc.setPage(i); doc.setDrawColor(...BLUE); doc.setLineWidth(0.3); doc.line(M,285,W-M,285); doc.setFontSize(7); doc.setTextColor(...GRAY); doc.setFont(undefined,"normal"); doc.text(`VetSOAP AI — ${todayStr()} 出力　院内管理資料`,M,290); doc.text(`${i} / ${tp}`,W-M,290,{align:"right"}); }
+  doc.save(`VetSOAP_${todayStr().replace(/年|月/g,"-").replace("日","")}_${results.length}頭.pdf`);
+}
+
+// ── Design tokens (Light theme) ───────────────────────────────────────────
+const T = {
+  bg:       "#f7f8fa",
+  surface:  "#ffffff",
+  border:   "#e4e8f0",
+  borderMd: "#c8d0de",
+  navy:     "#1a3a5c",
+  blue:     "#2563b8",
+  textPri:  "#1e2a3a",
+  textSec:  "#5a6a80",
+  textMut:  "#9aa5b8",
+  green:    "#059669",
+  greenBg:  "rgba(5,150,105,0.07)",
+  greenBd:  "rgba(5,150,105,0.2)",
+};
+
+const CARD = {
+  S:{accent:"#059669",bg:"rgba(5,150,105,0.05)",  border:"rgba(5,150,105,0.18)", label:"S — 稟告",   icon:"💬"},
+  O:{accent:"#2563b8",bg:"rgba(37,99,184,0.05)",   border:"rgba(37,99,184,0.18)",  label:"O — 客観所見",icon:"🔬"},
+  A:{accent:"#b45309",bg:"rgba(180,83,9,0.05)",    border:"rgba(180,83,9,0.18)",   label:"A — 評価",   icon:"📋"},
+  P:{accent:"#7c3aed",bg:"rgba(124,58,237,0.05)",  border:"rgba(124,58,237,0.18)", label:"P — 計画",   icon:"💊"},
+};
+const PAT_COLORS = ["#059669","#2563b8","#b45309","#dc2626","#7c3aed"];
+
+// ── UI Primitives ─────────────────────────────────────────────────────────
+function Pill({text,accent}){return(<div style={{display:"flex",gap:9,padding:"7px 12px",borderRadius:9,background:"#f8fafc",border:`1px solid ${T.border}`,alignItems:"flex-start"}}><div style={{width:5,height:5,borderRadius:"50%",background:accent,flexShrink:0,marginTop:6}}/><span style={{fontSize:12,color:T.textPri,lineHeight:1.65}}>{text}</span></div>);}
+function Badge({children,color}){return(<span style={{fontSize:9,fontFamily:"monospace",padding:"2px 7px",borderRadius:999,background:`${color}15`,border:`1px solid ${color}35`,color,fontWeight:700,whiteSpace:"nowrap"}}>{children}</span>);}
+function SLabel({text}){return(<div style={{fontSize:9,color:T.textMut,fontFamily:"monospace",textTransform:"uppercase",letterSpacing:1,marginBottom:4}}>{text}</div>);}
+function Divider(){return(<div style={{height:1,background:T.border,margin:"2px 0"}}/>);}
+
+function CardWrap({c,children}){return(<div style={{border:`1px solid ${c.border}`,borderRadius:14,background:c.bg,padding:15,display:"flex",flexDirection:"column",gap:9,boxShadow:"0 1px 4px rgba(0,0,0,0.04)"}}><div style={{display:"flex",alignItems:"center",gap:7,paddingBottom:9,borderBottom:`1px solid ${c.border}`}}><span style={{fontSize:15}}>{c.icon}</span><span style={{fontFamily:"monospace",fontSize:10,fontWeight:700,color:c.accent,letterSpacing:.8}}>{c.label}</span></div>{children}</div>);}
+
+function SCard({soap}){const c=CARD.S;const[show,setShow]=useState(false);const excl=soap.S?.除外した発言||[];return(<CardWrap c={c}>{soap.S?.主訴&&(<div style={{padding:"8px 12px",borderRadius:9,background:`${c.accent}0d`,border:`1px solid ${c.accent}25`}}><div style={{fontSize:9,color:c.accent,fontFamily:"monospace",marginBottom:2}}>主訴</div><div style={{fontSize:12.5,color:T.textPri,fontWeight:600}}>{soap.S.主訴}</div></div>)}{(soap.S?.稟告詳細||[]).map((t,i)=><Pill key={i} text={t} accent={c.accent}/>)}{excl.length>0&&(<div><button onClick={()=>setShow(v=>!v)} style={{background:"transparent",border:"1px solid rgba(220,38,38,0.25)",borderRadius:6,color:"#dc2626",fontSize:9,padding:"2px 9px",cursor:"pointer",fontFamily:"monospace"}}>⚠️ 除外 {excl.length}件 {show?"▲":"▼"}</button>{show&&(<div style={{marginTop:6,padding:9,borderRadius:8,background:"rgba(220,38,38,0.04)",border:"1px solid rgba(220,38,38,0.12)",display:"flex",flexDirection:"column",gap:4}}>{excl.map((t,i)=>(<div key={i} style={{display:"flex",gap:6}}><span style={{color:"#dc2626",fontSize:10}}>✗</span><span style={{fontSize:10,color:T.textSec,fontStyle:"italic"}}>「{t}」</span></div>))}</div>)}</div>)}</CardWrap>);}
+function OCard({soap}){const c=CARD.O;const v=soap.O?.バイタル||{};const vit=[["体温",v.体温],["心拍数",v.心拍数],["呼吸数",v.呼吸数],["体重",v.体重]].filter(x=>x[1]);return(<CardWrap c={c}>{vit.length>0&&(<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>{vit.map(([k,val])=>(<div key={k} style={{padding:"7px 10px",borderRadius:8,background:T.surface,border:`1px solid ${T.border}`,textAlign:"center",boxShadow:"0 1px 3px rgba(0,0,0,0.04)"}}><div style={{fontSize:8.5,color:T.textMut,fontFamily:"monospace",marginBottom:3}}>{k}</div><div style={{fontSize:13,fontWeight:700,color:c.accent,fontFamily:"monospace"}}>{val}</div></div>))}</div>)}{[...(soap.O?.身体検査||[]),...(soap.O?.実施検査結果||[])].map((t,i)=><Pill key={i} text={t} accent={c.accent}/>)}</CardWrap>);}
+function ACard({soap}){const c=CARD.A;const pc={high:"#dc2626",mid:"#b45309",low:"#6b7280"};const pl={high:"優先",mid:"中",low:"低"};return(<CardWrap c={c}>{soap.A?.主診断&&(<div style={{padding:"8px 12px",borderRadius:9,background:`${c.accent}0d`,border:`1px solid ${c.accent}30`}}><div style={{fontSize:9,color:c.accent,fontFamily:"monospace",marginBottom:2}}>主診断</div><div style={{fontSize:13,fontWeight:700,color:T.textPri}}>{soap.A.主診断}</div></div>)}{(soap.A?.鑑別疾患||[]).length>0&&(<div style={{display:"flex",flexDirection:"column",gap:5}}><SLabel text="鑑別疾患（DDx）"/>{soap.A.鑑別疾患.map((d,i)=>(<div key={i} style={{display:"flex",alignItems:"flex-start",gap:7,padding:"7px 10px",borderRadius:8,background:T.surface,border:`1px solid ${T.border}`}}><Badge color={pc[d.優先度]||"#6b7280"}>{pl[d.優先度]||d.優先度}</Badge><div><div style={{fontSize:11.5,color:T.textPri,fontWeight:600}}>{d.疾患名}</div>{d.根拠&&<div style={{fontSize:10,color:T.textSec,marginTop:1}}>{d.根拠}</div>}</div></div>))}</div>)}{(soap.A?.臨床推定||[]).map((t,i)=><Pill key={i} text={t} accent={c.accent}/>)}</CardWrap>);}
+function PCard({soap}){const c=CARD.P;return(<CardWrap c={c}>{(soap.P?.検査計画||[]).length>0&&(<div style={{display:"flex",flexDirection:"column",gap:5}}><SLabel text="検査計画"/>{soap.P.検査計画.map((t,i)=><Pill key={i} text={t} accent={c.accent}/>)}</div>)}{(soap.P?.["処置・投薬"]||[]).length>0&&(<div style={{display:"flex",flexDirection:"column",gap:5,marginTop:3}}><SLabel text="処置・投薬"/>{soap.P["処置・投薬"].map((d,i)=>(<div key={i} style={{display:"flex",alignItems:"center",flexWrap:"wrap",gap:5,padding:"7px 10px",borderRadius:8,background:T.surface,border:`1px solid ${T.border}`}}><span style={{fontSize:11.5,color:T.textPri,flex:1}}>{d.内容}</span>{d.用量&&<Badge color={c.accent}>{d.用量}</Badge>}{d.経路&&<Badge color={T.textMut}>{d.経路}</Badge>}</div>))}</div>)}{(soap.P?.飼い主指示||[]).length>0&&(<div style={{display:"flex",flexDirection:"column",gap:5,marginTop:3}}><SLabel text="飼い主指示"/>{soap.P.飼い主指示.map((t,i)=><Pill key={i} text={t} accent={c.accent}/>)}</div>)}{soap.P?.IC&&(<div style={{marginTop:3,padding:"9px 12px",borderRadius:9,background:"rgba(124,58,237,0.06)",border:"1px solid rgba(124,58,237,0.18)"}}><div style={{fontSize:9,color:"#7c3aed",fontFamily:"monospace",marginBottom:2}}>IC / 飼い主の心理的背景</div><div style={{fontSize:11.5,color:T.textPri}}>{soap.P.IC}</div></div>)}{soap.P?.再診&&(<div style={{padding:"8px 12px",borderRadius:9,background:"rgba(37,99,184,0.06)",border:"1px solid rgba(37,99,184,0.18)",display:"flex",alignItems:"center",gap:7}}><span>📅</span><span style={{fontSize:11.5,color:T.textPri}}>{soap.P.再診}</span></div>)}</CardWrap>);}
+
+// ── Speech Recognition ────────────────────────────────────────────────────
+function useSpeechRec(onResult, onEnd) {
+  const recRef = useRef(null);
+  const [available, setAvailable] = useState(false);
+  const [listening, setListening] = useState(false);
+  const [error, setSrError] = useState(null);
+
+  useEffect(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SR) setAvailable(true);
+  }, []);
+
+  const start = useCallback(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { setSrError("このブラウザは音声認識に対応していません（Chrome推奨）"); return; }
+    setSrError(null);
+    const rec = new SR();
+    rec.lang = "ja-JP";
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+    rec.onresult = (e) => {
+      let interim = "", final = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) final += t;
+        else interim += t;
+      }
+      onResult(final, interim);
+    };
+    rec.onerror = (e) => {
+      if (e.error === "not-allowed") setSrError("マイクへのアクセスが拒否されました。ブラウザの設定を確認してください。");
+      else if (e.error === "no-speech") setSrError("音声が検出されませんでした。");
+      else setSrError(`エラー: ${e.error}`);
+      setListening(false);
+    };
+    rec.onend = () => { setListening(false); onEnd?.(); };
+    rec.start();
+    recRef.current = rec;
+    setListening(true);
+  }, [onResult, onEnd]);
+
+  const stop = useCallback(() => {
+    recRef.current?.stop();
+    setListening(false);
+  }, []);
+
+  return { available, listening, error: error, start, stop };
+}
+
+// ── Waveform ──────────────────────────────────────────────────────────────
+function Waveform({ active }) {
+  const [h, setH] = useState(Array(18).fill(4));
+  useEffect(() => {
+    if (!active) { setH(Array(18).fill(4)); return; }
+    const id = setInterval(() => setH(Array(18).fill(0).map(() => Math.random()*28+4)), 130);
+    return () => clearInterval(id);
+  }, [active]);
   return (
-    <div style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"9px 14px",
-      borderRadius:10, background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.06)" }}>
-      <div style={{ width:5, height:5, borderRadius:"50%", background:accent, marginTop:6, flexShrink:0 }} />
-      <span style={{ fontSize:13, color:"#ccd6e8", lineHeight:1.6 }}>{text}</span>
+    <div style={{ display:"flex",alignItems:"center",gap:3,height:40 }}>
+      {h.map((v,i) => (
+        <div key={i} style={{ width:3,height:`${v}px`,borderRadius:2,transition:"height 0.1s ease",
+          background: active ? `rgba(5,150,105,${0.4+(i%3)*0.2})` : T.border }} />
+      ))}
     </div>
   );
 }
-function Tag({ children, color }) {
+
+// ── Patient block ─────────────────────────────────────────────────────────
+function PatientBlock({ result, index, onDownload, downloading }) {
+  const [tab, setTab] = useState("soap");
+  const { soap, seg } = result;
+  const accent = PAT_COLORS[index % PAT_COLORS.length];
+  const sp = soap?.patient?.推定動物種||"";
+  const emoji = sp.includes("猫")?"🐱":sp.includes("犬")?"🐶":sp.includes("うさぎ")?"🐰":"🐾";
   return (
-    <span style={{ fontSize:10, fontFamily:"monospace", padding:"2px 8px", borderRadius:999,
-      background:`${color}22`, border:`1px solid ${color}44`, color, fontWeight:700, whiteSpace:"nowrap" }}>
-      {children}
-    </span>
-  );
-}
-function CardShell({ c, children }) {
-  return (
-    <div style={{ border:`1px solid ${c.border}`, borderRadius:16, background:c.bg,
-      padding:18, display:"flex", flexDirection:"column", gap:12, animation:"fadeUp .45s both" }}>
-      <div style={{ display:"flex", alignItems:"center", gap:8,
-        paddingBottom:12, borderBottom:`1px solid ${c.border}` }}>
-        <span style={{ fontSize:18 }}>{c.icon}</span>
-        <span style={{ fontFamily:"monospace", fontSize:12, fontWeight:700, color:c.accent, letterSpacing:1 }}>{c.label}</span>
+    <div style={{ marginBottom:24,animation:"fadeUp .4s both",animationDelay:`${index*0.07}s` }}>
+      <div style={{ display:"flex",alignItems:"center",gap:12,padding:"12px 16px",borderRadius:12,
+        background:T.surface,border:`1px solid ${T.border}`,marginBottom:12,
+        boxShadow:"0 1px 6px rgba(0,0,0,0.06)" }}>
+        <div style={{ width:38,height:38,borderRadius:11,
+          background:`${accent}12`,border:`1px solid ${accent}30`,
+          display:"flex",alignItems:"center",justifyContent:"center",fontSize:20 }}>{emoji}</div>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:14,fontWeight:700,color:T.textPri }}>
+            {soap?.patient?.名前||`患者 ${index+1}`}
+            <span style={{ fontSize:10,color:T.textMut,fontWeight:400,marginLeft:7 }}>
+              {[soap?.patient?.推定動物種,soap?.patient?.推定品種,soap?.patient?.推定年齢].filter(Boolean).join(" / ")}
+            </span>
+          </div>
+          <div style={{ fontSize:9,color:T.textMut,fontFamily:"monospace",marginTop:2 }}>セグメント {index+1} — AI解析完了</div>
+        </div>
+        <button onClick={onDownload} disabled={downloading} style={{ padding:"6px 14px",borderRadius:8,border:"none",
+          cursor:downloading?"not-allowed":"pointer",
+          background:downloading?T.border:`linear-gradient(135deg,${T.green},#047857)`,
+          color:downloading?T.textMut:"white",fontSize:11,fontWeight:700,whiteSpace:"nowrap",
+          boxShadow:downloading?"none":"0 2px 8px rgba(5,150,105,0.25)" }}>
+          {downloading?"生成中...":"📄 PDF保存"}
+        </button>
       </div>
-      {children}
+      <div style={{ display:"flex",gap:4,marginBottom:11 }}>
+        {[["soap","📋 SOAP"],["raw","📝 原文"]].map(([id,label])=>(
+          <button key={id} onClick={()=>setTab(id)} style={{ padding:"5px 13px",borderRadius:7,border:"none",
+            cursor:"pointer",fontSize:11,fontWeight:600,
+            background:tab===id?`${accent}12`:"transparent",
+            color:tab===id?accent:T.textMut,
+            borderBottom:tab===id?`2px solid ${accent}`:`2px solid transparent` }}>{label}</button>
+        ))}
+      </div>
+      {tab==="soap"&&soap&&(<div style={{ display:"grid",gridTemplateColumns:"1fr 1fr",gap:12 }}><SCard soap={soap}/><OCard soap={soap}/><ACard soap={soap}/><PCard soap={soap}/></div>)}
+      {tab==="raw"&&(<pre style={{ padding:14,borderRadius:11,background:T.surface,border:`1px solid ${T.border}`,fontSize:11,color:T.textSec,lineHeight:1.9,whiteSpace:"pre-wrap",fontFamily:"monospace",margin:0,boxShadow:"0 1px 4px rgba(0,0,0,0.04)" }}>{seg}</pre>)}
     </div>
   );
 }
 
-// ── Section cards ─────────────────────────────────────────────────────────
-function SCard({ soap }) {
-  const c = C.S;
-  const [show, setShow] = useState(false);
-  const excluded = soap.S?.除外した発言 || [];
-  return (
-    <CardShell c={c}>
-      {soap.S?.主訴 && (
-        <div style={{ padding:"10px 14px", borderRadius:10, background:`${c.accent}15`,
-          border:`1px solid ${c.accent}33`, marginBottom:4 }}>
-          <span style={{ fontSize:11, color:c.accent, fontFamily:"monospace", display:"block", marginBottom:4 }}>主訴</span>
-          <span style={{ fontSize:14, color:"#e8f4f0", fontWeight:600 }}>{soap.S.主訴}</span>
-        </div>
-      )}
-      {(soap.S?.稟告詳細||[]).map((t,i) => <Pill key={i} text={t} accent={c.accent} />)}
-      {excluded.length > 0 && (
-        <div style={{ marginTop:4 }}>
-          <button onClick={() => setShow(!show)} style={{
-            background:"transparent", border:"1px solid rgba(239,68,68,0.25)", borderRadius:8,
-            color:"#f87171", fontSize:11, padding:"4px 12px", cursor:"pointer", fontFamily:"monospace" }}>
-            ⚠️ 除外した発言 {excluded.length}件 {show?"▲":"▼"}
-          </button>
-          {show && (
-            <div style={{ marginTop:8, padding:12, borderRadius:10,
-              background:"rgba(239,68,68,0.05)", border:"1px solid rgba(239,68,68,0.15)",
-              display:"flex", flexDirection:"column", gap:6 }}>
-              <p style={{ fontSize:11, color:"#f87171", fontFamily:"monospace", margin:"0 0 6px" }}>雑談・推測として除外</p>
-              {excluded.map((t,i) => (
-                <div key={i} style={{ display:"flex", gap:8 }}>
-                  <span style={{ color:"#f87171", fontSize:12 }}>✗</span>
-                  <span style={{ fontSize:12, color:"#99a0b8", fontStyle:"italic" }}>「{t}」</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </CardShell>
-  );
-}
-function OCard({ soap }) {
-  const c = C.O;
-  const v = soap.O?.バイタル||{};
-  const vitals = [["体温",v.体温],["心拍数",v.心拍数],["呼吸数",v.呼吸数],["体重",v.体重]].filter(x=>x[1]);
-  return (
-    <CardShell c={c}>
-      {vitals.length > 0 && (
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:8, marginBottom:4 }}>
-          {vitals.map(([k,val]) => (
-            <div key={k} style={{ padding:"10px 12px", borderRadius:10,
-              background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.07)", textAlign:"center" }}>
-              <div style={{ fontSize:10, color:"#6677aa", fontFamily:"monospace", marginBottom:4 }}>{k}</div>
-              <div style={{ fontSize:16, fontWeight:700, color:c.accent, fontFamily:"monospace" }}>{val}</div>
-            </div>
-          ))}
-        </div>
-      )}
-      {[...(soap.O?.身体検査||[]), ...(soap.O?.実施検査結果||[])].map((t,i) => <Pill key={i} text={t} accent={c.accent} />)}
-    </CardShell>
-  );
-}
-function ACard({ soap }) {
-  const c = C.A;
-  const pc = { high:"#f87171", mid:"#fbbf24", low:"#6677aa" };
-  const pl = { high:"優先", mid:"中", low:"低" };
-  return (
-    <CardShell c={c}>
-      {soap.A?.主診断 && (
-        <div style={{ padding:"12px 14px", borderRadius:10, background:`${c.accent}15`,
-          border:`1px solid ${c.accent}44`, marginBottom:4 }}>
-          <span style={{ fontSize:11, color:c.accent, fontFamily:"monospace", display:"block", marginBottom:4 }}>主診断</span>
-          <span style={{ fontSize:15, fontWeight:700, color:"#e8f4f0" }}>{soap.A.主診断}</span>
-        </div>
-      )}
-      {(soap.A?.鑑別疾患||[]).length > 0 && (
-        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-          <span style={{ fontSize:10, color:"#6677aa", fontFamily:"monospace", textTransform:"uppercase", letterSpacing:1 }}>鑑別疾患（Rule-out）</span>
-          {soap.A.鑑別疾患.map((d,i) => (
-            <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:10, padding:"9px 12px",
-              borderRadius:10, background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.06)" }}>
-              <Tag color={pc[d.優先度]||"#6677aa"}>{pl[d.優先度]||d.優先度}</Tag>
-              <div>
-                <div style={{ fontSize:13, color:"#ccd6e8", fontWeight:600, marginBottom:2 }}>{d.疾患名}</div>
-                {d.根拠 && <div style={{ fontSize:12, color:"#6677aa" }}>{d.根拠}</div>}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {(soap.A?.臨床推定||[]).map((t,i) => <Pill key={i} text={t} accent={c.accent} />)}
-    </CardShell>
-  );
-}
-function PCard({ soap }) {
-  const c = C.P;
-  return (
-    <CardShell c={c}>
-      {(soap.P?.検査計画||[]).length > 0 && (
-        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-          <span style={{ fontSize:10, color:"#6677aa", fontFamily:"monospace", textTransform:"uppercase", letterSpacing:1 }}>検査計画</span>
-          {soap.P.検査計画.map((t,i) => <Pill key={i} text={t} accent={c.accent} />)}
-        </div>
-      )}
-      {(soap.P?.["処置・投薬"]||[]).length > 0 && (
-        <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:8 }}>
-          <span style={{ fontSize:10, color:"#6677aa", fontFamily:"monospace", textTransform:"uppercase", letterSpacing:1 }}>処置・投薬</span>
-          {soap.P["処置・投薬"].map((d,i) => (
-            <div key={i} style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:8, padding:"9px 12px",
-              borderRadius:10, background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.06)" }}>
-              <span style={{ fontSize:13, color:"#ccd6e8", flex:1 }}>{d.内容}</span>
-              {d.用量 && <Tag color={c.accent}>{d.用量}</Tag>}
-              {d.経路 && <Tag color="#94a3b8">{d.経路}</Tag>}
-            </div>
-          ))}
-        </div>
-      )}
-      {(soap.P?.飼い主指示||[]).length > 0 && (
-        <div style={{ display:"flex", flexDirection:"column", gap:6, marginTop:8 }}>
-          <span style={{ fontSize:10, color:"#6677aa", fontFamily:"monospace", textTransform:"uppercase", letterSpacing:1 }}>飼い主指示</span>
-          {soap.P.飼い主指示.map((t,i) => <Pill key={i} text={t} accent={c.accent} />)}
-        </div>
-      )}
-      {soap.P?.再診 && (
-        <div style={{ marginTop:8, padding:"10px 14px", borderRadius:10,
-          background:`${c.accent}10`, border:`1px solid ${c.accent}30`,
-          display:"flex", alignItems:"center", gap:10 }}>
-          <span style={{ fontSize:16 }}>📅</span>
-          <span style={{ fontSize:13, color:"#ccd6e8" }}>{soap.P.再診}</span>
-        </div>
-      )}
-    </CardShell>
-  );
-}
+// ── Main ──────────────────────────────────────────────────────────────────
+export default function App() {
+  const [mode, setMode] = useState("record");
+  const [transcript, setTranscript] = useState("");
+  const [interimText, setInterimText] = useState("");
+  const [screen, setScreen] = useState("input");
+  const [results, setResults] = useState([]);
+  const [errMsg, setErrMsg] = useState("");
+  const [dots, setDots] = useState("");
+  const [procMsg, setProcMsg] = useState("");
+  const [dlAll, setDlAll] = useState(false);
+  const [dlIdx, setDlIdx] = useState(null);
+  const [dur, setDur] = useState(0);
+  const durRef = useRef(null);
 
-// ── Main Page ─────────────────────────────────────────────────────────────
-export default function Page() {
-  const [screen, setScreen]     = useState("upload");
-  const [transcript, setTranscript] = useState(SAMPLE);
-  const [soap, setSoap]         = useState(null);
-  const [error, setError]       = useState(null);
-  const [dots, setDots]         = useState("");
-  const [tab, setTab]           = useState("soap");
-  const timer = useRef(null);
+  const handleResult = useCallback((final, interim) => {
+    if (final) setTranscript(prev => prev + (prev ? "\n" : "") + final);
+    setInterimText(interim);
+  }, []);
 
-  const generate = async () => {
-    if (!transcript.trim()) return;
-    setScreen("processing"); setSoap(null); setError(null);
-    let d = 0;
-    timer.current = setInterval(() => { d=(d+1)%4; setDots(".".repeat(d)); }, 400);
-    try {
-      const res  = await fetch("/api/generate", {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ transcript }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "APIエラー");
-      setSoap(data.soap);
-      setScreen("result");
-    } catch(e) {
-      setError(e.message);
-      setScreen("error");
-    } finally {
-      clearInterval(timer.current);
-    }
+  const handleEnd = useCallback(() => {
+    setInterimText("");
+    clearInterval(durRef.current);
+  }, []);
+
+  const sr = useSpeechRec(handleResult, handleEnd);
+
+  const startRec = () => {
+    setTranscript(""); setInterimText(""); setDur(0);
+    sr.start();
+    durRef.current = setInterval(() => setDur(d => d+1), 1000);
   };
 
+  const stopRec = () => {
+    sr.stop();
+    clearInterval(durRef.current);
+  };
+
+  const fmt = s => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`;
+
+  useEffect(() => {
+    if (screen !== "processing") return;
+    const msgs = ["雑談・挨拶を除外中","稟告を分類中","バイタルを抽出中","鑑別診断を整理中","SOAPを構造化中"];
+    let d=0,mi=0; setProcMsg(msgs[0]);
+    const id=setInterval(()=>{d=(d+1)%4;setDots(".".repeat(d));mi=(mi+1)%msgs.length;setProcMsg(msgs[mi]);},700);
+    return()=>clearInterval(id);
+  },[screen]);
+
+  const generate = async () => {
+    const src = transcript.trim(); if (!src) return;
+    setScreen("processing"); setResults([]); setErrMsg("");
+    try {
+      const segs = splitByPatient(src);
+      const res = await Promise.all(segs.map(async seg => ({ soap: await callClaude(seg), seg })));
+      setResults(res); setScreen("result");
+    } catch(e) { setErrMsg(e.message); setScreen("error"); }
+  };
+
+  const reset = () => { setScreen("input"); setResults([]); setTranscript(""); setInterimText(""); setDur(0); clearInterval(durRef.current); };
+  const handleDlAll = async () => { setDlAll(true); try { await downloadPDF(results); } finally { setDlAll(false); } };
+  const handleDlOne = async (i) => { setDlIdx(i); try { await downloadPDF([results[i]]); } finally { setDlIdx(null); } };
+
+  const isRecording = sr.listening;
+  const hasSpeech = transcript.length > 0;
+
+  // ── Render ──────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column" }}>
+    <div style={{ minHeight:"100vh",background:T.bg,color:T.textPri,fontFamily:"'Noto Sans JP',sans-serif",display:"flex",flexDirection:"column" }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&display=swap');
+        @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+        @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+        @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+        *{box-sizing:border-box;margin:0;padding:0}
+        textarea{resize:vertical}
+        ::-webkit-scrollbar{width:5px}
+        ::-webkit-scrollbar-thumb{background:#d1d8e4;border-radius:3px}
+        button:focus{outline:none}
+      `}</style>
+
       {/* Nav */}
-      <nav style={{ height:52, background:"rgba(8,16,26,0.95)", backdropFilter:"blur(10px)",
-        borderBottom:"1px solid rgba(255,255,255,0.06)", padding:"0 24px",
-        display:"flex", alignItems:"center", gap:12, position:"sticky", top:0, zIndex:100 }}>
-        <div style={{ width:26, height:26, borderRadius:8,
-          background:"linear-gradient(135deg,#34d399,#0ea5e9)",
-          display:"flex", alignItems:"center", justifyContent:"center", fontSize:14 }}>🐾</div>
-        <span style={{ fontFamily:"monospace", fontSize:14, fontWeight:600, color:"#e8f4f0", letterSpacing:1 }}>
-          VetSOAP<span style={{ color:"#34d399" }}>AI</span>
-          <span style={{ fontSize:10, color:"#34d399", marginLeft:8, padding:"2px 6px",
-            border:"1px solid rgba(52,211,153,0.3)", borderRadius:4 }}>獣医師監修プロンプト v2</span>
+      <nav style={{ height:52,background:T.surface,borderBottom:`1px solid ${T.border}`,
+        padding:"0 22px",display:"flex",alignItems:"center",gap:10,
+        position:"sticky",top:0,zIndex:100,boxShadow:"0 1px 6px rgba(0,0,0,0.06)" }}>
+        <div style={{ width:28,height:28,borderRadius:8,
+          background:`linear-gradient(135deg,${T.green},${T.blue})`,
+          display:"flex",alignItems:"center",justifyContent:"center",fontSize:15 }}>🐾</div>
+        <span style={{ fontFamily:"monospace",fontSize:13,fontWeight:700,color:T.navy }}>
+          VetSOAP<span style={{ color:T.green }}>AI</span>
         </span>
-        <div style={{ flex:1 }} />
-        {screen==="result" && (
-          <button onClick={() => setScreen("upload")} style={{ padding:"6px 14px", borderRadius:8,
-            border:"1px solid rgba(255,255,255,0.1)", background:"transparent",
-            color:"#8899aa", cursor:"pointer", fontSize:12 }}>← 新規</button>
+        <span style={{ fontSize:9,color:T.green,padding:"2px 7px",
+          border:`1px solid ${T.greenBd}`,borderRadius:4,fontFamily:"monospace",background:T.greenBg }}>
+          v2.1 多頭対応
+        </span>
+        <div style={{ flex:1 }}/>
+        {screen==="result"&&(
+          <button onClick={reset} style={{ padding:"5px 13px",borderRadius:7,
+            border:`1px solid ${T.border}`,background:"transparent",
+            color:T.textSec,cursor:"pointer",fontSize:11 }}>← 新規</button>
         )}
       </nav>
 
-      {/* ── Upload ── */}
-      {screen==="upload" && (
-        <div style={{ maxWidth:760, width:"100%", margin:"0 auto", padding:"36px 24px", display:"flex", flexDirection:"column", gap:20 }}>
+      {/* ── INPUT ── */}
+      {screen==="input"&&(
+        <div style={{ maxWidth:740,width:"100%",margin:"0 auto",padding:"28px 20px",display:"flex",flexDirection:"column",gap:18 }}>
           <div>
-            <h1 style={{ fontSize:22, fontWeight:700, color:"#e8f4f0", marginBottom:6 }}>診察トランスクリプトを入力</h1>
-            <p style={{ fontSize:13, color:"#6677aa", lineHeight:1.7 }}>
-              音声書き起こしテキストを貼り付けてください。AIが雑談・推測を除外しSOAPに変換します。
+            <h1 style={{ fontSize:21,fontWeight:700,color:T.navy,marginBottom:5 }}>診察音声 → SOAP 自動変換</h1>
+            <p style={{ fontSize:12,color:T.textSec,lineHeight:1.85 }}>
+              音声認識またはテキスト入力で診察内容を入力。
+              <span style={{ color:T.green,fontWeight:500 }}>「次、〇〇で」「おしまい」</span>で複数頭を自動分割します。
             </p>
           </div>
-          <div style={{ border:"1px solid rgba(255,255,255,0.08)", borderRadius:16, overflow:"hidden", background:"rgba(255,255,255,0.02)" }}>
-            <div style={{ padding:"10px 16px", borderBottom:"1px solid rgba(255,255,255,0.06)",
-              display:"flex", alignItems:"center", gap:8 }}>
-              <span style={{ fontSize:12, color:"#6677aa", fontFamily:"monospace" }}>📝 トランスクリプト</span>
-              <div style={{ flex:1 }} />
-              <button onClick={() => setTranscript(SAMPLE)} style={{ fontSize:11, color:"#34d399",
-                background:"transparent", border:"1px solid rgba(52,211,153,0.3)", borderRadius:6, padding:"3px 10px", cursor:"pointer" }}>
-                サンプルを読み込む
-              </button>
-              <button onClick={() => setTranscript("")} style={{ fontSize:11, color:"#6677aa",
-                background:"transparent", border:"none", cursor:"pointer" }}>クリア</button>
+
+          {/* Security */}
+          <div style={{ display:"flex",alignItems:"center",gap:10,padding:"10px 14px",borderRadius:10,
+            background:T.greenBg,border:`1px solid ${T.greenBd}` }}>
+            <span style={{ fontSize:16 }}>🔒</span>
+            <div>
+              <div style={{ fontSize:11,fontWeight:700,color:T.green }}>ローカル保存モード</div>
+              <div style={{ fontSize:10,color:T.textSec }}>PDFはクラウドに送信されません。端末のダウンロードフォルダに直接保存されます。</div>
             </div>
-            <textarea value={transcript} onChange={e => setTranscript(e.target.value)}
-              placeholder="診察音声の書き起こしテキストをここに貼り付けてください..."
-              style={{ width:"100%", minHeight:260, background:"transparent", border:"none", outline:"none",
-                color:"#ccd6e8", fontSize:13, lineHeight:1.8, padding:16, fontFamily:"inherit" }} />
           </div>
-          <button onClick={generate} disabled={!transcript.trim()} style={{
-            padding:"14px 28px", borderRadius:12, border:"none",
-            background: transcript.trim() ? "linear-gradient(135deg,#34d399,#0ea5e9)" : "#1e3045",
-            color: transcript.trim() ? "#0b1520" : "#445566",
-            cursor: transcript.trim() ? "pointer" : "not-allowed",
-            fontSize:15, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:10 }}>
+
+          {/* Mode tabs */}
+          <div style={{ display:"flex",gap:4,padding:4,background:T.surface,
+            border:`1px solid ${T.border}`,borderRadius:11,width:"fit-content",
+            boxShadow:"0 1px 4px rgba(0,0,0,0.05)" }}>
+            {[["record","🎙️ 音声認識"],["text","📝 テキスト"]].map(([id,label])=>(
+              <button key={id} onClick={()=>setMode(id)} style={{ padding:"7px 18px",borderRadius:8,
+                border:"none",cursor:"pointer",fontSize:12,fontWeight:600,transition:"all 0.18s",
+                background:mode===id?T.greenBg:"transparent",
+                color:mode===id?T.green:T.textMut,
+                borderBottom:mode===id?`2px solid ${T.green}`:"2px solid transparent" }}>{label}</button>
+            ))}
+          </div>
+
+          {/* ── Record mode ── */}
+          {mode==="record"&&(
+            <div style={{ border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,
+              overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,0.05)" }}>
+              <div style={{ padding:"20px 20px 16px",display:"flex",flexDirection:"column",alignItems:"center",gap:14 }}>
+                <Waveform active={isRecording}/>
+                <div style={{ fontFamily:"monospace",fontSize:28,fontWeight:700,
+                  color:isRecording?T.green:T.textMut }}>{fmt(dur)}</div>
+
+                {/* Status */}
+                <div style={{ fontSize:11,color:T.textSec,fontFamily:"monospace",textAlign:"center" }}>
+                  {!sr.available && <span style={{ color:"#dc2626" }}>⚠️ このブラウザは音声認識に非対応です（Chrome推奨）</span>}
+                  {sr.available && !isRecording && !hasSpeech && "待機中 — 録音ボタンを押してください"}
+                  {sr.available && isRecording && <span style={{ animation:"pulse 1.5s infinite",display:"inline-block",color:T.green }}>● 録音中 — 話しかけてください</span>}
+                  {sr.available && !isRecording && hasSpeech && <span style={{ color:T.green }}>✓ 録音完了 — テキストを確認してSOAPを生成してください</span>}
+                </div>
+                {sr.error && (
+                  <div style={{ fontSize:11,color:"#dc2626",padding:"7px 14px",
+                    background:"rgba(220,38,38,0.06)",borderRadius:8,border:"1px solid rgba(220,38,38,0.15)",
+                    textAlign:"center",maxWidth:460 }}>{sr.error}</div>
+                )}
+
+                {/* Controls */}
+                <div style={{ display:"flex",gap:9 }}>
+                  {!isRecording&&!hasSpeech&&(
+                    <button onClick={startRec} disabled={!sr.available} style={{ padding:"10px 24px",borderRadius:10,border:"none",
+                      cursor:sr.available?"pointer":"not-allowed",
+                      background:sr.available?`linear-gradient(135deg,${T.green},#047857)`:"#e5e7eb",
+                      color:sr.available?"white":T.textMut,fontSize:13,fontWeight:700,
+                      boxShadow:sr.available?"0 3px 10px rgba(5,150,105,0.3)":"none" }}>
+                      ● 録音開始
+                    </button>
+                  )}
+                  {isRecording&&(
+                    <button onClick={stopRec} style={{ padding:"10px 24px",borderRadius:10,border:"none",cursor:"pointer",
+                      background:"linear-gradient(135deg,#dc2626,#b91c1c)",color:"white",
+                      fontSize:13,fontWeight:700,boxShadow:"0 3px 10px rgba(220,38,38,0.3)" }}>
+                      ■ 録音停止
+                    </button>
+                  )}
+                  {!isRecording&&hasSpeech&&(
+                    <button onClick={()=>{setTranscript("");setDur(0);}} style={{ padding:"10px 18px",borderRadius:10,
+                      border:`1px solid ${T.border}`,background:"transparent",color:T.textSec,cursor:"pointer",fontSize:12 }}>
+                      ↺ やり直す
+                    </button>
+                  )}
+                </div>
+
+                {/* Split keyword hint */}
+                <div style={{ width:"100%",padding:"10px 14px",borderRadius:9,
+                  background:T.greenBg,border:`1px solid ${T.greenBd}` }}>
+                  <div style={{ fontSize:10,color:T.green,fontFamily:"monospace",marginBottom:6 }}>
+                    💡 複数頭の診察 — 以下のキーワードで自動分割されます
+                  </div>
+                  <div style={{ display:"flex",gap:6,flexWrap:"wrap" }}>
+                    {["「次、〇〇で」","「別の〇〇で」","「〇〇はおしまい」"].map(kw=>(
+                      <span key={kw} style={{ fontSize:10,padding:"2px 9px",borderRadius:5,
+                        background:T.greenBg,border:`1px solid ${T.greenBd}`,color:T.green,fontFamily:"monospace" }}>{kw}</span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Live transcript display */}
+              {(hasSpeech || interimText) && (
+                <div style={{ borderTop:`1px solid ${T.border}` }}>
+                  <div style={{ padding:"8px 14px",display:"flex",alignItems:"center",gap:8,
+                    borderBottom:`1px solid ${T.border}`,background:"#f8fafc" }}>
+                    <span style={{ fontSize:10,color:T.textMut,fontFamily:"monospace" }}>📝 認識テキスト</span>
+                    <div style={{ flex:1 }}/>
+                    <button onClick={()=>setTranscript(SAMPLES.single)} style={{ fontSize:10,color:T.blue,
+                      background:"transparent",border:`1px solid rgba(37,99,184,0.3)`,
+                      borderRadius:5,padding:"2px 8px",cursor:"pointer" }}>1頭サンプル</button>
+                    <button onClick={()=>setTranscript(SAMPLES.multi)} style={{ fontSize:10,color:T.blue,
+                      background:"transparent",border:`1px solid rgba(37,99,184,0.3)`,
+                      borderRadius:5,padding:"2px 8px",cursor:"pointer" }}>2頭サンプル</button>
+                  </div>
+                  <div style={{ padding:"12px 14px",minHeight:80,maxHeight:200,overflowY:"auto",
+                    fontSize:12,lineHeight:1.9,color:T.textPri }}>
+                    {transcript}
+                    {interimText&&<span style={{ color:T.textMut,fontStyle:"italic" }}>{interimText}</span>}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── Text mode ── */}
+          {mode==="text"&&(
+            <div style={{ border:`1px solid ${T.border}`,borderRadius:14,background:T.surface,
+              overflow:"hidden",boxShadow:"0 2px 8px rgba(0,0,0,0.05)" }}>
+              <div style={{ padding:"9px 14px",borderBottom:`1px solid ${T.border}`,background:"#f8fafc",
+                display:"flex",alignItems:"center",gap:8 }}>
+                <span style={{ fontSize:11,color:T.textMut,fontFamily:"monospace" }}>📝 トランスクリプト</span>
+                <div style={{ flex:1 }}/>
+                <button onClick={()=>setTranscript(SAMPLES.single)} style={{ fontSize:10,color:T.green,
+                  background:"transparent",border:`1px solid ${T.greenBd}`,borderRadius:5,padding:"2px 8px",cursor:"pointer" }}>1頭</button>
+                <button onClick={()=>setTranscript(SAMPLES.multi)} style={{ fontSize:10,color:T.blue,
+                  background:"transparent",border:`1px solid rgba(37,99,184,0.3)`,borderRadius:5,padding:"2px 8px",cursor:"pointer" }}>2頭（分割デモ）</button>
+                <button onClick={()=>setTranscript("")} style={{ fontSize:10,color:T.textMut,background:"transparent",border:"none",cursor:"pointer" }}>クリア</button>
+              </div>
+              <textarea value={transcript} onChange={e=>setTranscript(e.target.value)}
+                placeholder={"診察音声の書き起こしを貼り付けてください。\n複数頭の場合：「次、タマちゃんで」のように書くと自動分割されます。"}
+                style={{ width:"100%",minHeight:180,background:"transparent",border:"none",outline:"none",
+                  color:T.textPri,fontSize:12,lineHeight:1.9,padding:"12px 14px",fontFamily:"inherit" }}/>
+              <div style={{ padding:"8px 14px",borderTop:`1px solid ${T.border}`,background:"#f8fafc",
+                display:"flex",gap:5,flexWrap:"wrap",alignItems:"center" }}>
+                <span style={{ fontSize:10,color:T.textMut,fontFamily:"monospace" }}>分割KW:</span>
+                {["「次、〇〇で」","「別の〇〇で」","「おしまい」"].map(kw=>(
+                  <span key={kw} style={{ fontSize:10,padding:"2px 8px",borderRadius:5,
+                    background:T.greenBg,border:`1px solid ${T.greenBd}`,color:T.green,fontFamily:"monospace" }}>{kw}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Generate */}
+          <button onClick={generate} disabled={!transcript.trim()} style={{ padding:"13px 24px",borderRadius:11,border:"none",
+            background:transcript.trim()?`linear-gradient(135deg,${T.green},${T.blue})`:"#e5e7eb",
+            color:transcript.trim()?"white":T.textMut,cursor:transcript.trim()?"pointer":"not-allowed",
+            fontSize:14,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",gap:8,
+            boxShadow:transcript.trim()?"0 6px 18px rgba(5,150,105,0.22)":"none",transition:"all 0.18s" }}>
             ✨ SOAP を生成する
           </button>
         </div>
       )}
 
-      {/* ── Processing ── */}
-      {screen==="processing" && (
-        <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:24, padding:48 }}>
-          <div style={{ width:72, height:72, borderRadius:20,
-            background:"linear-gradient(135deg,rgba(52,211,153,0.15),rgba(14,165,233,0.15))",
-            border:"1px solid rgba(52,211,153,0.2)",
-            display:"flex", alignItems:"center", justifyContent:"center", fontSize:32,
+      {/* ── PROCESSING ── */}
+      {screen==="processing"&&(
+        <div style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:22,padding:48 }}>
+          <div style={{ width:70,height:70,borderRadius:20,
+            background:`linear-gradient(135deg,${T.greenBg},rgba(37,99,184,0.08))`,
+            border:`1px solid ${T.greenBd}`,
+            display:"flex",alignItems:"center",justifyContent:"center",fontSize:30,
             animation:"spin 3s linear infinite" }}>🐾</div>
           <div style={{ textAlign:"center" }}>
-            <div style={{ fontSize:16, fontWeight:600, color:"#e8f4f0", marginBottom:8 }}>解析中{dots}</div>
-            <div style={{ fontSize:13, color:"#6677aa" }}>雑談を除外してSOAPを生成しています</div>
+            <div style={{ fontSize:15,fontWeight:600,color:T.navy,marginBottom:6 }}>解析中{dots}</div>
+            <div style={{ fontSize:11,color:T.textSec,fontFamily:"monospace" }}>{procMsg}</div>
+          </div>
+          <div style={{ display:"flex",gap:7 }}>
+            {["S","O","A","P"].map((k,i)=>{const c=Object.values(CARD)[i];return(<div key={k} style={{width:30,height:30,borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,fontFamily:"monospace",background:c.bg,border:`1px solid ${c.border}`,color:c.accent}}>{k}</div>);})}
           </div>
         </div>
       )}
 
-      {/* ── Error ── */}
-      {screen==="error" && (
-        <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16, padding:48 }}>
-          <div style={{ fontSize:40 }}>⚠️</div>
-          <div style={{ fontSize:16, fontWeight:600, color:"#f87171" }}>生成に失敗しました</div>
-          <div style={{ fontSize:13, color:"#6677aa", maxWidth:400, textAlign:"center" }}>{error}</div>
-          <button onClick={() => setScreen("upload")} style={{ padding:"10px 24px", borderRadius:10,
-            border:"1px solid rgba(255,255,255,0.1)", background:"transparent", color:"#ccd6e8", cursor:"pointer", fontSize:13 }}>← 戻る</button>
+      {/* ── ERROR ── */}
+      {screen==="error"&&(
+        <div style={{ flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:14,padding:48 }}>
+          <div style={{ fontSize:34 }}>⚠️</div>
+          <div style={{ fontSize:14,fontWeight:600,color:"#dc2626" }}>生成に失敗しました</div>
+          <div style={{ fontSize:11,color:T.textSec,maxWidth:360,textAlign:"center" }}>{errMsg}</div>
+          <button onClick={reset} style={{ padding:"8px 20px",borderRadius:9,border:`1px solid ${T.border}`,background:"transparent",color:T.textSec,cursor:"pointer",fontSize:12 }}>← 戻る</button>
         </div>
       )}
 
-      {/* ── Result ── */}
-      {screen==="result" && soap && (
-        <div style={{ maxWidth:900, width:"100%", margin:"0 auto", padding:"28px 24px 60px" }}>
-          <div style={{ display:"flex", alignItems:"center", gap:16, padding:"16px 20px",
-            borderRadius:14, background:"rgba(255,255,255,0.03)",
-            border:"1px solid rgba(255,255,255,0.07)", marginBottom:24 }}>
-            <span style={{ fontSize:28 }}>
-              {soap.patient?.推定動物種?.includes("猫") ? "🐱" : soap.patient?.推定動物種?.includes("犬") ? "🐶" : "🐾"}
-            </span>
+      {/* ── RESULT ── */}
+      {screen==="result"&&(
+        <div style={{ maxWidth:880,width:"100%",margin:"0 auto",padding:"24px 20px 56px" }}>
+          <div style={{ display:"flex",alignItems:"center",gap:10,padding:"12px 18px",borderRadius:12,
+            background:T.greenBg,border:`1px solid ${T.greenBd}`,marginBottom:24,
+            boxShadow:"0 1px 6px rgba(0,0,0,0.05)" }}>
+            <span style={{ fontSize:18 }}>✅</span>
             <div style={{ flex:1 }}>
-              <div style={{ fontSize:17, fontWeight:700, color:"#e8f4f0", marginBottom:3 }}>
-                {soap.patient?.名前||"患者"}{" "}
-                <span style={{ fontSize:13, color:"#6677aa", fontWeight:400 }}>
-                  {[soap.patient?.推定動物種, soap.patient?.推定品種, soap.patient?.推定年齢].filter(Boolean).join(" / ")}
-                </span>
-              </div>
-              <div style={{ fontSize:12, color:"#445566", fontFamily:"monospace" }}>AI解析完了</div>
+              <div style={{ fontSize:13,fontWeight:700,color:T.navy }}>{results.length}頭分のSOAPを生成しました</div>
+              <div style={{ fontSize:10,color:T.textSec,fontFamily:"monospace",marginTop:2 }}>🔒 PDFはダウンロードフォルダに直接保存されます（クラウド送信なし）</div>
             </div>
-            <button style={{ padding:"8px 18px", borderRadius:10, border:"none",
-              background:"#34d399", color:"#0b1520", cursor:"pointer", fontSize:13, fontWeight:700 }}>💾 カルテ保存</button>
+            <button onClick={handleDlAll} disabled={dlAll} style={{ padding:"8px 16px",borderRadius:9,border:"none",
+              cursor:dlAll?"not-allowed":"pointer",
+              background:dlAll?"#e5e7eb":`linear-gradient(135deg,${T.green},#047857)`,
+              color:dlAll?T.textMut:"white",fontSize:12,fontWeight:700,whiteSpace:"nowrap",
+              boxShadow:dlAll?"none":"0 2px 8px rgba(5,150,105,0.25)" }}>
+              {dlAll?"生成中...":"📄 全頭まとめてPDF保存"}
+            </button>
           </div>
-
-          <div style={{ display:"flex", gap:4, marginBottom:20 }}>
-            {[["soap","📋 SOAP"],["raw","📝 原文"]].map(([id,label]) => (
-              <button key={id} onClick={() => setTab(id)} style={{
-                padding:"7px 16px", borderRadius:8, border:"none", cursor:"pointer", fontSize:12, fontWeight:600,
-                background: tab===id ? "rgba(52,211,153,0.15)" : "transparent",
-                color: tab===id ? "#34d399" : "#6677aa",
-                borderBottom: tab===id ? "2px solid #34d399" : "2px solid transparent",
-                transition:"all 0.2s" }}>{label}</button>
-            ))}
-          </div>
-
-          {tab==="soap" && (
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14 }}>
-              <SCard soap={soap} />
-              <OCard soap={soap} />
-              <ACard soap={soap} />
-              <PCard soap={soap} />
-            </div>
-          )}
-          {tab==="raw" && (
-            <pre style={{ padding:20, borderRadius:14, background:"rgba(255,255,255,0.02)",
-              border:"1px solid rgba(255,255,255,0.07)", fontSize:13, color:"#8899aa",
-              lineHeight:1.8, whiteSpace:"pre-wrap", fontFamily:"monospace" }}>
-              {transcript}
-            </pre>
-          )}
+          {results.map((r,i)=>(
+            <PatientBlock key={i} result={r} index={i} onDownload={()=>handleDlOne(i)} downloading={dlIdx===i}/>
+          ))}
         </div>
       )}
     </div>
