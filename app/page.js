@@ -154,15 +154,40 @@ function downloadPDF(results) {
   <div class="cover-main">診察カルテ</div>
   <div class="cover-meta">${todayStr()}　${results.length}頭分</div>
 </div>
-<div class="security">🔒 このPDFはクラウドに送信されていません。印刷→PDFに保存で端末内に直接保存されます。診察内容は院内で適切に管理してください。</div>
+<div class="security">🔒 このPDFはクラウドに送信されていません。クラウド未送信・端末に直接ダウンロードされます。診察内容は院内で適切に管理してください。</div>
 ${patientsHTML}
 <div class="footer">VetSOAP AI — ${todayStr()} 出力　院内管理資料</div>
 </body></html>`;
 
-  const w = window.open("", "_blank");
-  w.document.write(html);
-  w.document.close();
-  w.onload = () => w.print();
+  // html2pdf.js で直接PDFダウンロード
+  const loadHtml2Pdf = () => new Promise((res, rej) => {
+    if (window.html2pdf) { res(); return; }
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+
+  loadHtml2Pdf().then(() => {
+    const container = document.createElement("div");
+    container.innerHTML = html;
+    container.style.cssText = "position:fixed;left:-9999px;top:0;width:794px";
+    document.body.appendChild(container);
+
+    const filename = `VetSOAP_${todayStr().replace(/年|月/g,"-").replace("日","")}_${results.length}頭.pdf`;
+    html2pdf()
+      .set({
+        margin: [10, 8, 10, 8],
+        filename,
+        image: { type:"jpeg", quality:0.95 },
+        html2canvas: { scale:2, useCORS:true, logging:false },
+        jsPDF: { unit:"mm", format:"a4", orientation:"portrait" },
+        pagebreak: { mode:["avoid-all","css"] }
+      })
+      .from(container)
+      .save()
+      .then(() => document.body.removeChild(container));
+  });
 }
 
 
