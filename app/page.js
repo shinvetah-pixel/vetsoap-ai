@@ -49,7 +49,11 @@ async function loadJsPDFWithFont() {
   const resp = await fetch(FONT_URL);
   if (!resp.ok) throw new Error("フォント取得失敗");
   const buf = await resp.arrayBuffer();
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+  const uint8 = new Uint8Array(buf);
+  let b64 = ""; const CHUNK = 8192;
+  for (let i = 0; i < uint8.length; i += CHUNK) {
+    b64 += btoa(String.fromCharCode(...uint8.subarray(i, i + CHUNK)));
+  }
   window.__notoFontB64 = b64;
   return { JsPDF, fontB64: b64 };
 }
