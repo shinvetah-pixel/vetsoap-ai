@@ -67,7 +67,7 @@ async function downloadPDF(results) {
   doc.addFileToVFS("NotoSansJP.ttf", fontB64);
   doc.addFont("NotoSansJP.ttf", "NotoSansJP", "normal");
   // bold は同フォントで代替（太字はfontSizeで表現）
-  doc.addFont("NotoSansJP.ttf", "NotoSansJP", "bold");
+  
 
   // ヘルパー：フォントセット（日本語フォントを常に使用）
   const sf = (style="normal") => doc.setFont("NotoSansJP", style);
@@ -87,7 +87,7 @@ async function downloadPDF(results) {
   function fillR(x,iy,w,h,r,fill) { doc.setFillColor(...fill); doc.roundedRect(x,iy,w,h,r,r,"F"); }
   function sh(label,color) {
     ck(11); fillR(M,y,CW,7.5,1.5,[...color.map(v=>Math.min(255,v+145))]);
-    doc.setFontSize(8.5); doc.setTextColor(...color); sf("bold");
+    doc.setFontSize(8.5); doc.setTextColor(...color); sf();
     doc.text(label,M+3,y+5.3); sf(); y+=9.5;
   }
   function bl(text,dc=GRAY) {
@@ -99,7 +99,7 @@ async function downloadPDF(results) {
   }
   function kv(label,val) {
     if(!val) return; ck(7);
-    doc.setFontSize(8); doc.setTextColor(...GRAY); sf("bold");
+    doc.setFontSize(8); doc.setTextColor(...GRAY); sf();
     doc.text(label+"：",M+2,y); sf();
     doc.setTextColor(50,60,80);
     const ls=doc.splitTextToSize(val,CW-22);
@@ -110,7 +110,7 @@ async function downloadPDF(results) {
   doc.setFillColor(...NAVY); doc.rect(0,0,W,34,"F");
   doc.setFontSize(10); doc.setTextColor(255,255,255); sf();
   doc.text("VetSOAP AI",M,13);
-  doc.setFontSize(17); sf("bold"); doc.text("診察カルテ",M,25);
+  doc.setFontSize(17); sf(); doc.text("診察カルテ",M,25);
   doc.setFontSize(8.5); doc.setTextColor(190,215,240); sf();
   doc.text(todayStr(),W-M,13,{align:"right"});
   doc.text(`${results.length}頭分`,W-M,21,{align:"right"});
@@ -118,7 +118,7 @@ async function downloadPDF(results) {
 
   fillR(M,y,CW,20,2.5,[245,250,255]);
   doc.setDrawColor(...BLUE); doc.setLineWidth(0.4); doc.roundedRect(M,y,CW,20,2.5,2.5,"S");
-  doc.setFontSize(8); doc.setTextColor(...NAVY); sf("bold");
+  doc.setFontSize(8); doc.setTextColor(...NAVY); sf();
   doc.text("【セキュリティ】",M+4,y+6.5); sf();
   doc.setTextColor(...GRAY);
   doc.text("このPDFはクラウドに送信されていません。お使いの端末のダウンロードフォルダに直接保存されています。",M+4,y+12,{maxWidth:CW-8});
@@ -131,7 +131,7 @@ async function downloadPDF(results) {
     ck(18);
     doc.setFillColor(...NAVY); doc.rect(M,y,CW,11,"F");
     doc.setFillColor(...BLUE); doc.rect(M,y,4,11,"F");
-    doc.setFontSize(10); doc.setTextColor(255,255,255); sf("bold");
+    doc.setFontSize(10); doc.setTextColor(255,255,255); sf();
     const nm=soap?.patient?.名前||`患者 ${idx+1}`;
     doc.text(`${idx+1}.  ${nm}`,M+7,y+7.5);
     const sub=[soap?.patient?.推定動物種,soap?.patient?.推定品種,soap?.patient?.推定年齢].filter(Boolean).join(" / ");
@@ -160,7 +160,7 @@ async function downloadPDF(results) {
         const bx=M+i*(bw+2); fillR(bx,y,bw,13,2,[244,247,252]);
         doc.setFontSize(7); doc.setTextColor(...GRAY); sf();
         doc.text(k,bx+bw/2,y+4,{align:"center"});
-        doc.setFontSize(9.5); doc.setTextColor(...BLUE); sf("bold");
+        doc.setFontSize(9.5); doc.setTextColor(...BLUE); sf();
         doc.text(String(val),bx+bw/2,y+10,{align:"center"});
       }); y+=16;
     }
@@ -170,11 +170,11 @@ async function downloadPDF(results) {
     sh("A — 評価（Assessment）",SC.A);
     if(soap?.A?.主診断) {
       ck(10); fillR(M,y,CW,8.5,2,[255,251,230]);
-      doc.setFontSize(9); doc.setTextColor(...SC.A); sf("bold"); doc.text("主診断：",M+3,y+6);
+      doc.setFontSize(9); doc.setTextColor(...SC.A); sf(); doc.text("主診断：",M+3,y+6);
       doc.setTextColor(50,60,80); sf(); doc.text(soap.A.主診断,M+22,y+6); y+=11;
     }
     if((soap?.A?.鑑別疾患||[]).length>0) {
-      ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); sf("bold");
+      ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); sf();
       doc.text("鑑別疾患（DDx）",M+2,y); y+=5;
       const pc={high:"[優先]",mid:"[中]",low:"[低]"};
       soap.A.鑑別疾患.forEach(d=>{
@@ -189,20 +189,20 @@ async function downloadPDF(results) {
     // P
     sh("P — 治療計画（Plan）",SC.P);
     if((soap?.P?.検査計画||[]).length>0) {
-      doc.setFontSize(8); doc.setTextColor(...GRAY); sf("bold"); doc.text("検査計画",M+2,y); y+=5;
+      doc.setFontSize(8); doc.setTextColor(...GRAY); sf(); doc.text("検査計画",M+2,y); y+=5;
       soap.P.検査計画.forEach(t=>bl(t,SC.P));
     }
     if((soap?.P?.["処置・投薬"]||[]).length>0) {
-      ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); sf("bold"); doc.text("処置・投薬",M+2,y); y+=5;
+      ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); sf(); doc.text("処置・投薬",M+2,y); y+=5;
       soap.P["処置・投薬"].forEach(d=>bl([d.内容,d.用量,d.経路].filter(Boolean).join("　/　"),SC.P));
     }
     if((soap?.P?.飼い主指示||[]).length>0) {
-      ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); sf("bold"); doc.text("飼い主指示",M+2,y); y+=5;
+      ck(6); doc.setFontSize(8); doc.setTextColor(...GRAY); sf(); doc.text("飼い主指示",M+2,y); y+=5;
       soap.P.飼い主指示.forEach(t=>bl(t,[150,80,200]));
     }
     if(soap?.P?.IC) {
       ck(12); fillR(M,y,CW,10,2,[250,245,255]);
-      doc.setFontSize(7.5); doc.setTextColor(140,80,200); sf("bold");
+      doc.setFontSize(7.5); doc.setTextColor(140,80,200); sf();
       doc.text("IC / 飼い主の心理的背景：",M+3,y+4); sf();
       doc.setTextColor(80,60,100);
       const ls=doc.splitTextToSize(soap.P.IC,CW-48);
@@ -210,13 +210,13 @@ async function downloadPDF(results) {
     }
     if(soap?.P?.再診) {
       ck(10); fillR(M,y,CW,8.5,2,[242,250,255]);
-      doc.setFontSize(8); doc.setTextColor(...BLUE); sf("bold"); doc.text("再診：",M+3,y+6); sf();
+      doc.setFontSize(8); doc.setTextColor(...BLUE); sf(); doc.text("再診：",M+3,y+6); sf();
       doc.setTextColor(50,60,80); doc.text(soap.P.再診,M+18,y+6); y+=11;
     }
 
     // 原文
     y+=4; ck(16);
-    fillR(M,y,CW,8,1.5,LGRAY); doc.setFontSize(8); doc.setTextColor(...NAVY); sf("bold");
+    fillR(M,y,CW,8,1.5,LGRAY); doc.setFontSize(8); doc.setTextColor(...NAVY); sf();
     doc.text("原文（文字起こし）",M+3,y+5.5); y+=10;
     const rawLines=doc.splitTextToSize(seg.replace(/\n/g," "),CW-4);
     const rawH=Math.min(rawLines.length,28)*4.5+4;
