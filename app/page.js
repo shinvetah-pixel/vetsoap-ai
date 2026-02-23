@@ -24,187 +24,102 @@ const SAMPLES = {
 
 // ── Claude API ────────────────────────────────────────────────────────────
 
-// ── PDF ───────────────────────────────────────────────────────────────────
-// ── PDF（印刷方式・日本語完全対応） ──────────────────────────────────────
+// ── テキスト保存（ライブラリ不要・日本語確実） ──────────────────────────
 function todayStr() { const d=new Date(); return `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`; }
 
-async function downloadPDF(results) {
-  const NAVY="#1a3a5c", BLUE="#2563b8", GREEN="#059669";
-  const SC = { S:GREEN, O:BLUE, A:"#b45309", P:"#7c3aed" };
+function downloadPDF(results) {
+  const LINE = "━".repeat(48);
+  const line = "─".repeat(48);
 
-  const patientsHTML = results.map((r, idx) => {
+  const blocks = results.map((r, idx) => {
     const { soap, seg } = r;
     const nm = soap?.patient?.名前 || `患者 ${idx+1}`;
     const sub = [soap?.patient?.推定動物種, soap?.patient?.推定品種, soap?.patient?.推定年齢].filter(Boolean).join(" / ");
     const vit = soap?.O?.バイタル || {};
-    const vitals = [["体温",vit.体温],["心拍数",vit.心拍数],["呼吸数",vit.呼吸数],["体重",vit.体重]].filter(x=>x[1]);
 
-    const vitHTML = vitals.length > 0
-      ? `<div class="vitals">${vitals.map(([k,v])=>`<div class="vit-box"><div class="vit-label">${k}</div><div class="vit-val">${v}</div></div>`).join("")}</div>` : "";
+    let txt = "";
+    txt += `${LINE}\n`;
+    txt += `  【患者 ${idx+1}】 ${nm}　${sub}\n`;
+    txt += `${LINE}\n\n`;
 
-    const ddxHTML = (soap?.A?.鑑別疾患||[]).map(d => {
-      const pc = {high:"🔴 優先",mid:"🟡 中",low:"⚪ 低"};
-      return `<div class="ddx-row"><span class="ddx-pri ${d.優先度}">${pc[d.優先度]||d.優先度}</span><span class="ddx-name">${d.疾患名}</span>${d.根拠?`<span class="ddx-reason">（${d.根拠}）</span>`:""}</div>`;
-    }).join("");
-
-    const rxHTML = (soap?.P?.["処置・投薬"]||[]).map(d =>
-      `<li>${d.内容}${d.用量?` <span class="badge">${d.用量}</span>`:""}${d.経路?` <span class="badge muted">${d.経路}</span>`:""}</li>`
-    ).join("");
-
-    return `
-    <div class="patient" style="break-before:${idx===0?"avoid":"page"}">
-      <div class="pat-header">
-        <div class="pat-num">${idx+1}</div>
-        <div>
-          <div class="pat-name">${nm}</div>
-          <div class="pat-sub">${sub}</div>
-        </div>
-      </div>
-
-      <div class="section">
-        <div class="sec-label" style="color:${SC.S}">S — 稟告（Subjective）</div>
-        ${soap?.S?.主訴 ? `<div class="chief">${soap.S.主訴}</div>` : ""}
-        ${(soap?.S?.稟告詳細||[]).map(t=>`<div class="item">• ${t}</div>`).join("")}
-        ${(soap?.S?.除外した発言||[]).length>0?`<div class="excluded">除外: ${soap.S.除外した発言.join("、")}</div>`:""}
-      </div>
-
-      <div class="section">
-        <div class="sec-label" style="color:${SC.O}">O — 客観所見（Objective）</div>
-        ${vitHTML}
-        ${[...(soap?.O?.身体検査||[]),...(soap?.O?.実施検査結果||[])].map(t=>`<div class="item">• ${t}</div>`).join("")}
-      </div>
-
-      <div class="section">
-        <div class="sec-label" style="color:${SC.A}">A — 評価（Assessment）</div>
-        ${soap?.A?.主診断 ? `<div class="diagnosis">主診断：${soap.A.主診断}</div>` : ""}
-        ${ddxHTML ? `<div class="ddx">${ddxHTML}</div>` : ""}
-        ${(soap?.A?.臨床推定||[]).map(t=>`<div class="item">• ${t}</div>`).join("")}
-      </div>
-
-      <div class="section">
-        <div class="sec-label" style="color:${SC.P}">P — 治療計画（Plan）</div>
-        ${(soap?.P?.検査計画||[]).length>0?`<div class="sub-label">検査計画</div>${soap.P.検査計画.map(t=>`<div class="item">• ${t}</div>`).join("")}`:""}
-        ${rxHTML ? `<div class="sub-label">処置・投薬</div><ul class="rx">${rxHTML}</ul>` : ""}
-        ${(soap?.P?.飼い主指示||[]).length>0?`<div class="sub-label">飼い主指示</div>${soap.P.飼い主指示.map(t=>`<div class="item">• ${t}</div>`).join("")}`:""}
-        ${soap?.P?.IC ? `<div class="ic"><span class="ic-label">IC / 飼い主の心理的背景：</span>${soap.P.IC}</div>` : ""}
-        ${soap?.P?.再診 ? `<div class="followup">📅 再診：${soap.P.再診}</div>` : ""}
-      </div>
-
-      <div class="raw-wrap">
-        <div class="raw-label">原文（文字起こし）</div>
-        <div class="raw">${seg.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>
-      </div>
-    </div>`;
-  }).join("");
-
-  const html = `<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="UTF-8">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap">
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Noto Sans JP','Hiragino Kaku Gothic ProN','Hiragino Sans','Meiryo','Yu Gothic',sans-serif;font-size:10pt;color:#1e2a3a;background:#fff;padding:0}
-  .cover{background:${NAVY};color:#fff;padding:28px 24px 22px;margin-bottom:0}
-  .cover-title{font-size:9pt;opacity:.8;margin-bottom:4px}
-  .cover-main{font-size:22pt;font-weight:700;margin-bottom:10px}
-  .cover-meta{font-size:9pt;opacity:.7}
-  .security{background:#f0fff4;border:1px solid #a7f3d0;padding:10px 14px;margin:14px 24px;border-radius:6px;font-size:8.5pt;color:#065f46}
-  .patient{padding:16px 24px 20px;border-bottom:2px solid #e4e8f0}
-  .pat-header{display:flex;align-items:center;gap:10px;background:${NAVY};color:#fff;padding:10px 14px;border-radius:8px;margin-bottom:14px}
-  .pat-num{width:28px;height:28px;background:${BLUE};border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13pt;flex-shrink:0}
-  .pat-name{font-size:14pt;font-weight:700}
-  .pat-sub{font-size:8.5pt;opacity:.7;margin-top:2px}
-  .section{margin-bottom:13px}
-  .sec-label{font-size:9pt;font-weight:700;margin-bottom:7px;padding:4px 8px;border-radius:4px;background:rgba(0,0,0,0.04)}
-  .sub-label{font-size:8pt;font-weight:700;color:#5a6a80;margin:6px 0 3px 4px}
-  .chief{background:#f0fdf4;border:1px solid #a7f3d0;padding:7px 10px;border-radius:6px;font-weight:700;font-size:11pt;margin-bottom:6px}
-  .item{font-size:9.5pt;padding:3px 6px;line-height:1.7}
-  .excluded{font-size:8pt;color:#dc2626;margin-top:4px;font-style:italic}
-  .vitals{display:flex;gap:8px;margin-bottom:8px}
-  .vit-box{flex:1;border:1px solid #e4e8f0;border-radius:6px;padding:6px;text-align:center;background:#f8fafc}
-  .vit-label{font-size:7.5pt;color:#9aa5b8;margin-bottom:3px}
-  .vit-val{font-size:12pt;font-weight:700;color:${BLUE}}
-  .diagnosis{background:#fffbeb;border:1px solid #fde68a;padding:8px 12px;border-radius:6px;font-size:11pt;font-weight:700;margin-bottom:7px}
-  .ddx{margin-bottom:6px}
-  .ddx-row{display:flex;align-items:baseline;gap:8px;padding:3px 4px;font-size:9pt}
-  .ddx-pri{font-size:8pt;white-space:nowrap}
-  .ddx-name{font-weight:700}
-  .ddx-reason{color:#6b7280;font-size:8.5pt}
-  .rx{padding-left:18px}
-  .rx li{font-size:9.5pt;padding:2px 0;line-height:1.7}
-  .badge{background:#ede9fe;color:#7c3aed;border-radius:4px;padding:1px 6px;font-size:8pt;margin-left:4px}
-  .badge.muted{background:#f1f5f9;color:#64748b}
-  .ic{background:#faf5ff;border:1px solid #ddd6fe;padding:8px 12px;border-radius:6px;font-size:9pt;margin-top:6px}
-  .ic-label{font-weight:700;color:#7c3aed;margin-right:6px}
-  .followup{background:#eff6ff;border:1px solid #bfdbfe;padding:7px 12px;border-radius:6px;font-size:9.5pt;margin-top:6px}
-  .raw-wrap{margin-top:10px;border:1px solid #e4e8f0;border-radius:6px;overflow:hidden}
-  .raw-label{background:#f1f5f9;padding:5px 10px;font-size:8pt;font-weight:700;color:#64748b}
-  .raw{padding:8px 10px;font-size:8pt;line-height:1.8;color:#64748b;white-space:pre-wrap;max-height:120pt;overflow:hidden}
-  .footer{text-align:center;padding:10px;font-size:7.5pt;color:#9aa5b8;border-top:1px solid #e4e8f0}
-  @media print{
-    @page{size:A4;margin:10mm 8mm}
-    body{print-color-adjust:exact;-webkit-print-color-adjust:exact}
-  }
-</style>
-</head>
-<body>
-<div class="cover">
-  <div class="cover-title">VetSOAP AI</div>
-  <div class="cover-main">診察カルテ</div>
-  <div class="cover-meta">${todayStr()}　${results.length}頭分</div>
-</div>
-<div class="security">🔒 このPDFはクラウドに送信されていません。クラウド未送信・端末に直接ダウンロードされます。診察内容は院内で適切に管理してください。</div>
-${patientsHTML}
-<div class="footer">VetSOAP AI — ${todayStr()} 出力　院内管理資料</div>
-</body></html>`;
-
-  // html2pdf.js で直接PDFダウンロード
-  const loadHtml2Pdf = () => new Promise((res, rej) => {
-    if (window.html2pdf) { res(); return; }
-    const s = document.createElement("script");
-    s.src = "https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js";
-    s.onload = res; s.onerror = rej;
-    document.head.appendChild(s);
-  });
-
-  // フォントをプリロードして描画準備を待つ
-  const waitForFonts = () => {
-    if (document.fonts && document.fonts.ready) {
-      return document.fonts.ready;
+    // S
+    txt += `■ S — 稟告（Subjective）\n${line}\n`;
+    if (soap?.S?.主訴) txt += `  主訴: ${soap.S.主訴}\n`;
+    (soap?.S?.稟告詳細||[]).forEach(t => { txt += `  • ${t}\n`; });
+    if ((soap?.S?.除外した発言||[]).length > 0) {
+      txt += `  [除外] ${soap.S.除外した発言.join("、")}\n`;
     }
-    return new Promise(r => setTimeout(r, 500));
-  };
+    txt += "\n";
 
-  await loadHtml2Pdf();
+    // O
+    txt += `■ O — 客観所見（Objective）\n${line}\n`;
+    const vitItems = [["体温",vit.体温],["心拍数",vit.心拍数],["呼吸数",vit.呼吸数],["体重",vit.体重]].filter(x=>x[1]);
+    if (vitItems.length > 0) {
+      txt += `  バイタル: ${vitItems.map(([k,v])=>`${k} ${v}`).join(" ／ ")}\n`;
+    }
+    [...(soap?.O?.身体検査||[]),...(soap?.O?.実施検査結果||[])].forEach(t => { txt += `  • ${t}\n`; });
+    txt += "\n";
 
-  const container = document.createElement("div");
-  container.innerHTML = html;
-  // opacity:0 + 画面内に配置（html2canvasはvisible領域のほうが安定）
-  container.style.cssText = "position:absolute;left:0;top:0;width:794px;z-index:-9999;opacity:0;pointer-events:none";
-  document.body.appendChild(container);
+    // A
+    txt += `■ A — 評価（Assessment）\n${line}\n`;
+    if (soap?.A?.主診断) txt += `  主診断: ${soap.A.主診断}\n`;
+    (soap?.A?.鑑別疾患||[]).forEach(d => {
+      const pri = {high:"優先",mid:"中",low:"低"};
+      txt += `  • [${pri[d.優先度]||d.優先度}] ${d.疾患名}${d.根拠?`（${d.根拠}）`:""}\n`;
+    });
+    (soap?.A?.臨床推定||[]).forEach(t => { txt += `  • ${t}\n`; });
+    txt += "\n";
 
-  // フォント＋レイアウト描画を待つ
-  await waitForFonts();
-  // ブラウザに1フレーム描画させる
-  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    // P
+    txt += `■ P — 治療計画（Plan）\n${line}\n`;
+    if ((soap?.P?.検査計画||[]).length > 0) {
+      txt += `  [検査計画]\n`;
+      soap.P.検査計画.forEach(t => { txt += `    • ${t}\n`; });
+    }
+    if ((soap?.P?.["処置・投薬"]||[]).length > 0) {
+      txt += `  [処置・投薬]\n`;
+      soap.P["処置・投薬"].forEach(d => {
+        txt += `    • ${d.内容}${d.用量?` [${d.用量}]`:""}${d.経路?` (${d.経路})`:""}\n`;
+      });
+    }
+    if ((soap?.P?.飼い主指示||[]).length > 0) {
+      txt += `  [飼い主指示]\n`;
+      soap.P.飼い主指示.forEach(t => { txt += `    • ${t}\n`; });
+    }
+    if (soap?.P?.IC) txt += `  [IC] ${soap.P.IC}\n`;
+    if (soap?.P?.再診) txt += `  [再診] ${soap.P.再診}\n`;
+    txt += "\n";
 
-  const filename = `VetSOAP_${todayStr().replace(/年|月/g,"-").replace("日","")}_${results.length}頭.pdf`;
-  try {
-    await html2pdf()
-      .set({
-        margin: [10, 8, 10, 8],
-        filename,
-        image: { type:"jpeg", quality:0.98 },
-        html2canvas: { scale:2, useCORS:true, logging:false, allowTaint:true, windowWidth:794 },
-        jsPDF: { unit:"mm", format:"a4", orientation:"portrait" },
-        pagebreak: { mode:["avoid-all","css"] }
-      })
-      .from(container)
-      .save();
-  } finally {
-    document.body.removeChild(container);
-  }
+    // 原文
+    txt += `  ── 原文（文字起こし） ──\n`;
+    txt += seg.split("\n").map(l => `  ${l}`).join("\n");
+    txt += "\n";
+
+    return txt;
+  }).join("\n");
+
+  const header = [
+    `${"═".repeat(48)}`,
+    `  VetSOAP AI — 診察カルテ`,
+    `  ${todayStr()}　${results.length}頭分`,
+    `  ※ 端末に直接保存。クラウド未送信。`,
+    `${"═".repeat(48)}`,
+    "",
+  ].join("\n");
+
+  const fullText = header + blocks;
+
+  // BOM付きUTF-8でダウンロード（Windowsメモ帳でも文字化けしない）
+  const bom = "\uFEFF";
+  const blob = new Blob([bom + fullText], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `VetSOAP_${todayStr().replace(/年|月/g,"-").replace("日","")}_${results.length}頭.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 
@@ -342,7 +257,7 @@ function PatientBlock({ result, index, onDownload, downloading }) {
           background:downloading?T.border:`linear-gradient(135deg,${T.green},#047857)`,
           color:downloading?T.textMut:"white",fontSize:11,fontWeight:700,whiteSpace:"nowrap",
           boxShadow:downloading?"none":"0 2px 8px rgba(5,150,105,0.25)" }}>
-          {downloading?"生成中...":"📄 PDF保存"}
+          {downloading?"保存中...":"📄 テキスト保存"}
         </button>
       </div>
       <div style={{ display:"flex",gap:4,marginBottom:11 }}>
@@ -667,14 +582,14 @@ export default function App() {
             <span style={{ fontSize:18 }}>✅</span>
             <div style={{ flex:1 }}>
               <div style={{ fontSize:13,fontWeight:700,color:T.navy }}>{results.length}頭分のSOAPを生成しました</div>
-              <div style={{ fontSize:10,color:T.textSec,fontFamily:"monospace",marginTop:2 }}>🔒 PDFはダウンロードフォルダに直接保存されます（クラウド送信なし）</div>
+              <div style={{ fontSize:10,color:T.textSec,fontFamily:"monospace",marginTop:2 }}>🔒 テキストファイルはダウンロードフォルダに直接保存されます（クラウド送信なし）</div>
             </div>
             <button onClick={handleDlAll} disabled={dlAll} style={{ padding:"8px 16px",borderRadius:9,border:"none",
               cursor:dlAll?"not-allowed":"pointer",
               background:dlAll?"#e5e7eb":`linear-gradient(135deg,${T.green},#047857)`,
               color:dlAll?T.textMut:"white",fontSize:12,fontWeight:700,whiteSpace:"nowrap",
               boxShadow:dlAll?"none":"0 2px 8px rgba(5,150,105,0.25)" }}>
-              {dlAll?"生成中...":"📄 全頭まとめてPDF保存"}
+              {dlAll?"保存中...":"📄 全頭まとめて保存"}
             </button>
           </div>
           {results.map((r,i)=>(
