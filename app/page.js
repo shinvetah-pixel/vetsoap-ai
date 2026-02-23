@@ -23,39 +23,6 @@ const SAMPLES = {
 };
 
 // ── Claude API ────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `あなたは日本の小動物臨床に精通した獣医師アシスタントです。
-診察音声トランスクリプトをSOAP形式に変換してください。
-【除外】挨拶・雑談・天気・会計・業務連絡
-【S】飼い主の事実申告のみ。推測・感想は除外へ。獣医用語変換（やせた→削痩の稟告あり、足をひきずる→右後肢跛行の稟告あり、水をよく飲む→多飲多尿の稟告あり）
-【O】獣医師が測定・観察した数値と所見のみ。単位付きで。
-【A】主診断＋鑑別疾患（優先度high/mid/low付き）
-【P】検査・処置投薬（薬剤名・用量・経路）・飼い主指示・IC（飼い主の心理的背景も記録）・再診
-必ず以下のJSONのみで出力。説明文・マークダウン記号は不要。
-{"patient":{"推定動物種":"","推定品種":"","推定年齢":"","名前":""},"S":{"主訴":"","稟告詳細":[""],"除外した発言":[""]},"O":{"バイタル":{"体温":"","心拍数":"","呼吸数":"","体重":""},"身体検査":[""],"実施検査結果":[""]},"A":{"主診断":"","鑑別疾患":[{"疾患名":"","根拠":"","優先度":"high"}],"臨床推定":[""]},"P":{"検査計画":[""],"処置・投薬":[{"内容":"","用量":"","経路":""}],"飼い主指示":[""],"IC":"","再診":""}}`;
-
-async function callClaude(seg) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: `以下の診察トランスクリプトをSOAPに変換してください：\n\n${seg}` }] })
-  });
-  const data = await res.json();
-  const raw = (data.content || []).map(c => c.text || "").join("");
-  const clean = raw.replace(/^```json\s*/i,"").replace(/^```\s*/i,"").replace(/```\s*$/i,"").trim();
-  try { return JSON.parse(clean); }
-  catch { const m = clean.match(/\{[\s\S]*\}/); if (m) return JSON.parse(m[0]); throw new Error("パース失敗"); }
-}
-
-const SPLIT_RE = /^.*(次[、,\s　]*(?:の子は?|に?)?[、,\s　]*|別の[、,\s　]*|(?:は|が)?おしまい|次の患者|続いて).*/i;
-function splitByPatient(text) {
-  const lines = text.split("\n"); const segs = []; let cur = []; let split = false;
-  for (const line of lines) {
-    if (SPLIT_RE.test(line.trim()) && cur.length > 0) { segs.push(cur.join("\n").trim()); cur = []; split = true; continue; }
-    cur.push(line);
-  }
-  if (cur.length > 0) segs.push(cur.join("\n").trim());
-  return split ? segs.filter(s => s.length > 20) : [text];
-}
 
 // ── PDF ───────────────────────────────────────────────────────────────────
 function loadJsPDF() {
@@ -341,9 +308,16 @@ export default function App() {
     const src = transcript.trim(); if (!src) return;
     setScreen("processing"); setResults([]); setErrMsg("");
     try {
-      const segs = splitByPatient(src);
-      const res = await Promise.all(segs.map(async seg => ({ soap: await callClaude(seg), seg })));
-      setResults(res); setScreen("result");
+      const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript: src })
+      });
+      if (!res.ok) { const err = await res.text(); throw new Error(`APIエラー: ${res.status}`); }
+      const data = await res.json();
+      if (!data.results || data.results.length === 0) throw new Error("結果が空です");
+      setResults(data.results.map(r => ({ soap: r.soap, seg: r.transcript })));
+      setScreen("result");
     } catch(e) { setErrMsg(e.message); setScreen("error"); }
   };
 
